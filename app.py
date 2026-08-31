@@ -8,7 +8,7 @@ st.title("🚑 Ambulance Rig Inventory")
 
 # ⚡ CRITICAL: PASTE YOUR GOOGLE SHEET LINK HERE
 # Cut everything from "/edit" onwards out and leave the bare base link
-SPREADSHEET_BASE_URL = "https://google.com"
+SPREADSHEET_BASE_URL = "https://docs.google.com/spreadsheets/d/1RB4LI6I-AQa_MAs8IB2C7twhr0RsYZqThHNsw6mg9gI/"
 
 # Helper function to convert a standard Google Sheet link into a direct multi-tab CSV stream
 def load_rig_data_via_csv(sheet_name):
