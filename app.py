@@ -4,9 +4,24 @@ import json
 import os
 from datetime import datetime, timedelta
 
-# 1. Page Configuration Layout
-st.set_page_config(page_title="Ambulance Med Tracker", page_icon="🚑", layout="centered")
-st.title("🚑 Ambulance Rig Inventory")
+# 1. Mobile-Optimized Page Settings
+st.set_page_config(page_title="EMS Med Tracker", page_icon="🚑", layout="centered")
+
+# Custom CSS injected directly to shrink padding and layout cards perfectly on iPhone/Android screens
+st.markdown("""
+    <style>
+    .block-container { padding-top: 1rem !important; padding-bottom: 1rem !important; padding-horizontal: 0.5rem !important; }
+    h1 { font-size: 22px !important; text-align: center; color: #d9534f; margin-bottom: 5px !important; }
+    h3 { font-size: 16px !important; margin-bottom: 2px !important; margin-top: 2px !important; display: inline; }
+    div[data-testid="stMetricValue"] { font-size: 18px !important; }
+    div[data-testid="stMetricLabel"] { font-size: 11px !important; }
+    .stButton>button { width: 100% !important; padding: 0.4rem !important; font-size: 13px !important; height: 34px !important; }
+    hr { margin: 6px 0px !important; }
+    div.stForm { padding: 8px !important; }
+    </style>
+""", unsafe_allow_html=True)
+
+st.title("🚑 Ambulance Med Tracker")
 
 # 2. Hardcoded Master Fallback Array (Your exact 42 medication profiles)
 def get_original_master_data():
@@ -55,150 +70,144 @@ def get_original_master_data():
         {"id": "42", "name": "Zofran", "count": 1, "expiry": "2026-12-31"}
     ]
 
-# 3. File System I/O Handlers
+# 3. File System Storage Handlers
 LOCAL_FILE_PATH = "inventory_records.json"
 
 def load_data_from_disk():
-    """Reads inventory profile off hard drive file system. Automatically falls back to master array if file missing."""
     if os.path.exists(LOCAL_FILE_PATH):
         try:
             with open(LOCAL_FILE_PATH, "r") as f:
                 return json.load(f)
         except Exception:
             pass
-    
-    # Initialize brand new schema file structure
-    initial_data = {
-        "Rig #356": get_original_master_data(),
-        "Rig #357": get_original_master_data()
-    }
+    initial_data = {"Rig #356": get_original_master_data(), "Rig #357": get_original_master_data()}
     save_data_to_disk(initial_data)
     return initial_data
 
 def save_data_to_disk(data):
-    """Commits active variables onto hard drive workspace."""
     with open(LOCAL_FILE_PATH, "w") as f:
         json.dump(data, f, indent=4)
 
-# 4. Sync Memory Operations State
 if "rig_inventories" not in st.session_state:
     st.session_state.rig_inventories = load_data_from_disk()
 
-# 5. Global Metrics & Compliance Alert Dashboard
-st.subheader("📋 Logistics Overview: Safety Alerts")
-
+# 4. Global Calculations for Safety Alerts
 out_of_stock = []
 low_stock = []
 expiring_soon = []
 
 today = datetime.today()
-expiry_threshold = today + timedelta(days=15)
+expiry_threshold_15d = today + timedelta(days=15)
 
-# Calculate status across BOTH rigs simultaneously
 for rig_name, items in st.session_state.rig_inventories.items():
     for item in items:
-        if int(item["count"]) == 0:
-            out_of_stock.append(f"{item['name']} ({rig_name})")
-        elif int(item["count"]) == 1:
-            low_stock.append(f"{item['name']} ({rig_name})")
+        c = int(item["count"])
+        if c == 0:
+            out_of_stock.append({"rig": rig_name, "name": item["name"]})
+        elif c == 1:
+            low_stock.append({"rig": rig_name, "name": item["name"]})
         
-        if int(item["count"]) > 0:
+        if c > 0:
             try:
                 med_expiry = datetime.strptime(item["expiry"].strip(), "%Y-%m-%d")
-                if med_expiry <= expiry_threshold:
+                if med_expiry <= expiry_threshold_15d:
                     days_left = (med_expiry - today).days
                     days_str = "Today" if days_left == 0 else f"{days_left}d left"
-                    expiring_soon.append(f"{item['name']} ({rig_name}) - Exp: {item['expiry']} ({days_str})")
+                    expiring_soon.append({"rig": rig_name, "name": item["name"], "days": days_left, "str": days_str})
             except ValueError:
                 pass
 
-# Render header card panels
-metric_col1, metric_col2, metric_col3 = st.columns(3)
-with metric_col1:
-    st.metric(label="Out of Stock (0 Left)", value=len(out_of_stock))
-with metric_col2:
-    st.metric(label="Low Stock (1 Left)", value=len(low_stock))
-with metric_col3:
-    st.metric(label="Expiring within 15 Days", value=len(expiring_soon))
+# 5. Top Selection UI Elements
+col_rig, col_sig = st.columns(2)
+with col_rig:
+    selected_rig = st.selectbox("🔑 Active Vehicle", options=["Rig #356", "Rig #357"])
+with col_sig:
+    crew_signature = st.text_input("✍️ Paramedic Sig", placeholder="Name/Initials", max_chars=15).strip()
 
-if out_of_stock:
-    st.error(f"**🛑 Out of Stock:** {', '.join(out_of_stock)}")
-if low_stock:
-    st.warning(f"**⚠️ Critical Low Stock:** {', '.join(low_stock)}")
-if expiring_soon:
-    st.info(f"**⏳ Expiring within 15 Days:**\n" + "\n".join([f"- {m}" for m in expiring_soon]))
-if not out_of_stock and not low_stock and not expiring_soon:
-    st.success("✅ All vehicles are fully stocked and medications are up to date.")
+current_inventory = st.session_state.rig_inventories[selected_rig]
+
+# 6. Logistics Dashboard Expander
+with st.expander("📋 View Safety Alerts Summary", expanded=True):
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Empty", len([x for x in out_of_stock if x['rig'] == selected_rig]))
+    m2.metric("Low", len([x for x in low_stock if x['rig'] == selected_rig]))
+    m3.metric("<15d Exp", len([x for x in expiring_soon if x['rig'] == selected_rig]))
+
+    rig_empty_list = [x['name'] for x in out_of_stock if x['rig'] == selected_rig]
+    rig_low_list = [x['name'] for x in low_stock if x['rig'] == selected_rig]
+    rig_exp_list = [f"{x['name']} ({x['str']})" for x in expiring_soon if x['rig'] == selected_rig]
+
+    if rig_empty_list:
+        st.error(f"**🛑 Empty:** {', '.join(rig_empty_list)}")
+    if rig_low_list:
+        st.warning(f"**⚠️ Low Stock:** {', '.join(rig_low_list)}")
+    if rig_exp_list:
+        st.info(f"**⏳ Expiring (<15d):**\n" + "\n".join([f"- {m}" for m in rig_exp_list]))
+
+# 7. Copy-to-Text Report Box Feature
+st.subheader("📱 Export Text Report")
+
+text_report = f"🚑 EMS REPORT: {selected_rig}\n"
+text_report += f"📅 Date: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
+text_report += f"✍️ Signed: {crew_signature if crew_signature else 'Not Signed'}\n"
+text_report += "---------------------\n"
+
+text_alerts = []
+for x in out_of_stock:
+    if x['rig'] == selected_rig:
+        text_alerts.append(f"• {x['name']}: OUT OF STOCK")
+for x in low_stock:
+    if x['rig'] == selected_rig:
+        text_alerts.append(f"• {x['name']}: 1 LEFT")
+for x in expiring_soon:
+    if x['rig'] == selected_rig and x['days'] <= 5:
+        text_alerts.append(f"• {x['name']}: EXPIRES IN {x['days']} DAYS")
+
+if text_alerts:
+    text_report += "\n".join(text_alerts)
+else:
+    text_report += "✅ All meds are checked and up to code."
+
+st.text_area(label="Tap box below, select all, and copy to text:", value=text_report, height=130)
 
 st.markdown("---")
 
-# 6. Active Selection Inputs
-selected_rig = st.selectbox("🔑 Select Ambulance Unit to Update", options=["Rig #356", "Rig #357"])
-current_inventory = st.session_state.rig_inventories[selected_rig]
+# 8. Mobile Filter Search Strip
+search_query = st.text_input("🔍 Quick Filter Med List...", placeholder="Type name...").strip()
 
-search_query = st.text_input("🔍 Search Medications...", placeholder=f"Search items inside {selected_rig}...").strip()
-
-# 7. Dynamic Inventory List Render Engine
-st.subheader(f"Current Live Stock: {selected_rig}")
+# 9. Dynamic Med Row Layout Cards (Flattened to remove layout alignment crashes)
+st.subheader(f"Inventory: {selected_rig}")
 
 for i, med in enumerate(current_inventory):
     if search_query.lower() in med["name"].lower():
-        with st.container():
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                is_expiring_soon = False
-                try:
-                    med_expiry = datetime.strptime(med["expiry"].strip(), "%Y-%m-%d")
-                    if med_expiry <= expiry_threshold and int(med["count"]) > 0:
-                        is_expiring_soon = True
-                except ValueError:
-                    pass
-
-                if int(med["count"]) == 0:
-                    st.markdown(f"### 🛑 {med['name']} *(EMPTY)*")
-                elif is_expiring_soon:
-                    st.markdown(f"### ⏳ {med['name']} *(EXPIRING SOON)*")
-                elif int(med["count"]) == 1:
-                    st.markdown(f"### ⚠️ {med['name']} *(LOW)*")
-                else:
-                    st.markdown(f"### {med['name']}")
-                
-                st.write(f"**Stock:** {med['count']} | **Exp:** {med['expiry']}")
-            
-            with col2:
-                btn_disabled = int(med["count"]) == 0
-                if st.button(f"Use 1", key=f"use_{selected_rig}_{med['id']}_{i}", disabled=btn_disabled):
-                    med["count"] = int(med["count"]) - 1
-                    # Save states locally instantly
-                    save_data_to_disk(st.session_state.rig_inventories)
-                    st.rerun()
-            st.markdown("---")
-
-# 8. Interactive Restock Workflow Form Panel
-st.subheader(f"Log Restock / Shipments into {selected_rig}")
-
-with st.form("restock_form", clear_on_submit=True):
-    med_names = [med["name"] for med in current_inventory]
-    selected_name = st.selectbox("Select Medication to Restock", options=med_names)
-    
-    col_qty, col_exp = st.columns(2)
-    with col_qty:
-        qty_to_add = st.number_input("Quantity Added", min_value=1, value=1, step=1)
-    with col_exp:
-        change_exp = st.checkbox("Update Expiration Date?")
-        new_exp_date = st.date_input("New Expiration Date", value=datetime.today())
-
-    submit_button = st.form_submit_button(label="Save Restock Entry", type="primary")
-
-    if submit_button:
-        for med in current_inventory:
-            if med["name"] == selected_name:
-                med["count"] = int(med["count"]) + int(qty_to_add)
-                if change_exp:
-                    med["expiry"] = new_exp_date.strftime("%Y-%m-%d")
+        c_count = int(med["count"])
         
-        # Save record entries back to JSON file
-        save_data_to_disk(st.session_state.rig_inventories)
-        st.success(f"Successfully saved restock record updates locally!")
-        st.rerun()
+        is_expiring = False
+        try:
+            m_exp = datetime.strptime(med["expiry"].strip(), "%Y-%m-%d")
+            if m_exp <= expiry_threshold_15d and c_count > 0:
+                is_expiring = True
+        except ValueError:
+            pass
+
+        # Build clean string labels
+        status_label = ""
+        if c_count == 0:
+            status_label = " 🛑 (EMPTY)"
+        elif is_expiring:
+            status_label = " ⏳ (EXPIRING)"
+        elif c_count == 1:
+            status_label = " ⚠️ (LOW)"
+
+        # Render rows using a direct layout split
+        row_col1, row_col2 = st.columns([3, 1])
+        
+        with row_col1:
+            st.markdown(f"**{med['name']}**{status_label}")
+            st.markdown(f"Stock: `{c_count}` | Exp: `{med['expiry']}`")
+            
+        with row_col2:
+            if st.button("Use 1", key=f"use_{selected_rig}_{med['id']}_{i}", disabled=(c_count == 0)):
+                med["count"] = c_count - 1
+                save_data_to_disk(st.session_state.rig_inventories)
+                st.rerun()
