@@ -1,29 +1,27 @@
 import streamlit as st
-import pandas as pd
 import json
 import os
 from datetime import datetime, timedelta
 
-# 1. Mobile-Optimized Page Settings
+# 1. Page Configuration & Layout Customizations
 st.set_page_config(page_title="EMS Med Tracker", page_icon="🚑", layout="centered")
 
-# Custom CSS injected directly to shrink padding and layout cards perfectly on iPhone/Android screens
 st.markdown("""
     <style>
     .block-container { padding-top: 1rem !important; padding-bottom: 1rem !important; padding-horizontal: 0.5rem !important; }
     h1 { font-size: 22px !important; text-align: center; color: #d9534f; margin-bottom: 5px !important; }
-    h3 { font-size: 16px !important; margin-bottom: 2px !important; margin-top: 2px !important; display: inline; }
+    h3 { font-size: 16px !important; margin-bottom: 2px !important; margin-top: 2px !important; }
     div[data-testid="stMetricValue"] { font-size: 18px !important; }
     div[data-testid="stMetricLabel"] { font-size: 11px !important; }
-    .stButton>button { width: 100% !important; padding: 0.4rem !important; font-size: 13px !important; height: 34px !important; }
-    hr { margin: 6px 0px !important; }
-    div.stForm { padding: 8px !important; }
+    .stButton>button { width: 100% !important; padding: 0.4rem !important; font-size: 14px !important; height: 42px !important; }
+    hr { margin: 8px 0px !important; }
+    div.stForm { padding: 12px !important; border-radius: 8px !important; }
     </style>
 """, unsafe_allow_html=True)
 
 st.title("🚑 Ambulance Med Tracker")
 
-# 2. Hardcoded Master Fallback Array (Your exact 42 medication profiles)
+# 2. Hardcoded Master Meds Database
 def get_original_master_data():
     return [
         {"id": "1", "name": "Adenosine", "count": 5, "expiry": "2027-05-12"},
@@ -70,28 +68,32 @@ def get_original_master_data():
         {"id": "42", "name": "Zofran", "count": 1, "expiry": "2026-12-31"}
     ]
 
-# 3. File System Storage Handlers
+# 3. Secure File I/O Engine
 LOCAL_FILE_PATH = "inventory_records.json"
 
 def load_data_from_disk():
     if os.path.exists(LOCAL_FILE_PATH):
         try:
             with open(LOCAL_FILE_PATH, "r") as f:
-                return json.load(f)
+                content = json.load(f)
+                if content and "Rig #356" in content:
+                    return content
         except Exception:
             pass
-    initial_data = {"Rig #356": get_original_master_data(), "Rig #357": get_original_master_data()}
-    save_data_to_disk(initial_data)
-    return initial_data
+    fallback_data = {"Rig #356": get_original_master_data(), "Rig #357": get_original_master_data()}
+    with open(LOCAL_FILE_PATH, "w") as f:
+        json.dump(fallback_data, f, indent=4)
+    return fallback_data
 
 def save_data_to_disk(data):
     with open(LOCAL_FILE_PATH, "w") as f:
         json.dump(data, f, indent=4)
 
+# Initialize Session State
 if "rig_inventories" not in st.session_state:
     st.session_state.rig_inventories = load_data_from_disk()
 
-# 4. Global Calculations for Safety Alerts
+# 4. Global Inventory Alert Calculations
 out_of_stock = []
 low_stock = []
 expiring_soon = []
@@ -117,16 +119,14 @@ for rig_name, items in st.session_state.rig_inventories.items():
             except ValueError:
                 pass
 
-# 5. Top Selection UI Elements
+# 5. Core Vehicle & Crew Identifiers
 col_rig, col_sig = st.columns(2)
 with col_rig:
     selected_rig = st.selectbox("🔑 Active Vehicle", options=["Rig #356", "Rig #357"])
 with col_sig:
     crew_signature = st.text_input("✍️ Paramedic Sig", placeholder="Name/Initials", max_chars=15).strip()
 
-current_inventory = st.session_state.rig_inventories[selected_rig]
-
-# 6. Logistics Dashboard Expander
+# 6. Safety Metrics Summary Panel
 with st.expander("📋 View Safety Alerts Summary", expanded=True):
     m1, m2, m3 = st.columns(3)
     m1.metric("Empty", len([x for x in out_of_stock if x['rig'] == selected_rig]))
@@ -144,7 +144,7 @@ with st.expander("📋 View Safety Alerts Summary", expanded=True):
     if rig_exp_list:
         st.info(f"**⏳ Expiring (<15d):**\n" + "\n".join([f"- {m}" for m in rig_exp_list]))
 
-# 7. Copy-to-Text Report Box Feature
+# 7. SMS Communication Block Builder
 st.subheader("📱 Export Text Report")
 
 text_report = f"🚑 EMS REPORT: {selected_rig}\n"
@@ -172,42 +172,29 @@ st.text_area(label="Tap box below, select all, and copy to text:", value=text_re
 
 st.markdown("---")
 
-# 8. Mobile Filter Search Strip
-search_query = st.text_input("🔍 Quick Filter Med List...", placeholder="Type name...").strip()
+# 8. Action Windows (Re-engineered to use stable, retro-compatible expanders)
+st.subheader("⚙️ Quick Transaction Entry Windows")
 
-# 9. Dynamic Med Row Layout Cards (Flattened to remove layout alignment crashes)
-st.subheader(f"Inventory: {selected_rig}")
-
-for i, med in enumerate(current_inventory):
-    if search_query.lower() in med["name"].lower():
-        c_count = int(med["count"])
-        
-        is_expiring = False
-        try:
-            m_exp = datetime.strptime(med["expiry"].strip(), "%Y-%m-%d")
-            if m_exp <= expiry_threshold_15d and c_count > 0:
-                is_expiring = True
-        except ValueError:
-            pass
-
-        # Build clean string labels
-        status_label = ""
-        if c_count == 0:
-            status_label = " 🛑 (EMPTY)"
-        elif is_expiring:
-            status_label = " ⏳ (EXPIRING)"
-        elif c_count == 1:
-            status_label = " ⚠️ (LOW)"
-
-        # Render rows using a direct layout split
-        row_col1, row_col2 = st.columns([3, 1])
-        
-        with row_col1:
-            st.markdown(f"**{med['name']}**{status_label}")
-            st.markdown(f"Stock: `{c_count}` | Exp: `{med['expiry']}`")
+with st.expander("💉 Open Medication Usage Log Window"):
+    st.info(f"Deducting clinical volumes from: **{selected_rig}**")
+    current_meds_list = st.session_state.rig_inventories[selected_rig]
+    available_to_use = [m["name"] for m in current_meds_list if int(m["count"]) > 0]
+    
+    if available_to_use:
+        with st.form("inline_usage_form", clear_on_submit=True):
+            use_name = st.selectbox("Select Medication Administered", options=available_to_use)
+            qty_used = st.number_input("Quantity Used", min_value=1, value=1, step=1)
             
-        with row_col2:
-            if st.button("Use 1", key=f"use_{selected_rig}_{med['id']}_{i}", disabled=(c_count == 0)):
-                med["count"] = c_count - 1
-                save_data_to_disk(st.session_state.rig_inventories)
-                st.rerun()
+            if st.form_submit_button(label="Commit and Save Medication Usage", type="primary"):
+                for idx, med in enumerate(st.session_state.rig_inventories[selected_rig]):
+                    if med["name"] == use_name:
+                        current_count = int(med["count"])
+                        new_count = max(0, current_count - qty_used)
+                        st.session_state.rig_inventories[selected_rig][idx]["count"] = new_count
+                        save_data_to_disk(st.session_state.rig_inventories)
+                        st.success(f"Deducted {qty_used} from {use_name}!")
+                        st.rerun()
+                        break
+    else:
+        st.warning("No medications currently available with stock greater than 0.")
+
