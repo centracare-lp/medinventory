@@ -21,9 +21,9 @@ st.markdown("""
 
 st.title("🚑 Ambulance Med Tracker")
 
-# 2. Hardcoded Master Meds Database Layout Engine
+# 2. Hardcoded Master Meds Database
 def get_original_master_data():
-    raw_list = [
+    return [
         {"id": "1", "name": "Adenosine", "count": 5, "expiry": "2027-05-12"},
         {"id": "2", "name": "Albuterol", "count": 2, "expiry": "2026-10-01"},
         {"id": "3", "name": "Amiodarone", "count": 3, "expiry": "2028-01-15"},
@@ -67,8 +67,6 @@ def get_original_master_data():
         {"id": "41", "name": "Vecuronium", "count": 2, "expiry": "2028-01-15"},
         {"id": "42", "name": "Zofran", "count": 1, "expiry": "2026-12-31"}
     ]
-    # Transform to structural dict database mapping to prevent multi-loop execution faults
-    return {m["name"]: {"count": int(m["count"]), "expiry": m["expiry"]} for m in raw_list}
 
 # 3. Secure File I/O Engine
 LOCAL_FILE_PATH = "inventory_records.json"
@@ -91,7 +89,7 @@ def save_data_to_disk(data):
     with open(LOCAL_FILE_PATH, "w") as f:
         json.dump(data, f, indent=4)
 
-# Initialize Session State Tree
+# Initialize Session State
 if "rig_inventories" not in st.session_state:
     st.session_state.rig_inventories = load_data_from_disk()
 
@@ -104,20 +102,20 @@ today = datetime.today()
 expiry_threshold_15d = today + timedelta(days=15)
 
 for rig_name, items in st.session_state.rig_inventories.items():
-    for name, m in items.items():
-        c = int(m["count"])
+    for item in items:
+        c = int(item["count"])
         if c == 0:
-            out_of_stock.append({"rig": rig_name, "name": name})
+            out_of_stock.append({"rig": rig_name, "name": item["name"]})
         elif c == 1:
-            low_stock.append({"rig": rig_name, "name": name})
+            low_stock.append({"rig": rig_name, "name": item["name"]})
         
         if c > 0:
             try:
-                med_expiry = datetime.strptime(m["expiry"].strip(), "%Y-%m-%d")
+                med_expiry = datetime.strptime(item["expiry"].strip(), "%Y-%m-%d")
                 if med_expiry <= expiry_threshold_15d:
                     days_left = (med_expiry - today).days
                     days_str = "Today" if days_left == 0 else f"{days_left}d left"
-                    expiring_soon.append({"rig": rig_name, "name": name, "days": days_left, "str": days_str})
+                    expiring_soon.append({"rig": rig_name, "name": item["name"], "days": days_left, "str": days_str})
             except ValueError:
                 pass
 
@@ -174,27 +172,29 @@ st.text_area(label="Tap box below, select all, and copy to text:", value=text_re
 
 st.markdown("---")
 
-# 8. Action Windows
+# 8. Action Windows (Re-engineered to use stable, retro-compatible expanders)
 st.subheader("⚙️ Quick Transaction Entry Windows")
 
-# Get active datasets safely
-active_inventory = st.session_state.rig_inventories[selected_rig]
-all_med_names = sorted(list(active_inventory.keys()))
-available_to_use = sorted([name for name, data in active_inventory.items() if int(data["count"]) > 0])
-
-# Form 1: Usage Panel
 with st.expander("💉 Open Medication Usage Log Window"):
     st.info(f"Deducting clinical volumes from: **{selected_rig}**")
+    current_meds_list = st.session_state.rig_inventories[selected_rig]
+    available_to_use = [m["name"] for m in current_meds_list if int(m["count"]) > 0]
+    
     if available_to_use:
         with st.form("inline_usage_form", clear_on_submit=True):
             use_name = st.selectbox("Select Medication Administered", options=available_to_use)
             qty_used = st.number_input("Quantity Used", min_value=1, value=1, step=1)
             
             if st.form_submit_button(label="Commit and Save Medication Usage", type="primary"):
-                current_count = int(active_inventory[use_name]["count"])
-                st.session_state.rig_inventories[selected_rig][use_name]["count"] = max(0, current_count - qty_used)
-                save_data_to_disk(st.session_state.rig_inventories)
-                st.success(f"Deducted {qty_used} from {use_name}!")
-                st.rerun()
+                for idx, med in enumerate(st.session_state.rig_inventories[selected_rig]):
+                    if med["name"] == use_name:
+                        current_count = int(med["count"])
+                        new_count = max(0, current_count - qty_used)
+                        st.session_state.rig_inventories[selected_rig][idx]["count"] = new_count
+                        save_data_to_disk(st.session_state.rig_inventories)
+                        st.success(f"Deducted {qty_used} from {use_name}!")
+                        st.rerun()
+                        break
     else:
         st.warning("No medications currently available with stock greater than 0.")
+
