@@ -96,11 +96,9 @@ INITIAL_DATA = {
 
 NARCOTICS = ["Diazepam (Valium)", "Dilaudid", "Fentanyl", "Ketamine", "Midazolam", "Propofol"]
 
-# Establish operational session state
+# --- CRITICAL TRACKING FIX: FORCE IN-MEMORY PERSISTENCE ---
 if "med_data" not in st.session_state:
     st.session_state["med_data"] = json.loads(json.dumps(INITIAL_DATA))
-
-current_inventory = st.session_state["med_data"]
 
 # --- 2. USER INTERFACE GENERATION ---
 st.title("🚑 Ambulance Med Check Dashboard")
@@ -109,12 +107,12 @@ st.sidebar.header("🛡️ Operations Hub")
 user_role = st.sidebar.selectbox("Select Your Certification Level", ["EMT / Basic", "Paramedic"])
 selected_rig = st.sidebar.radio("Active Ambulance Unit", ["Rig #356", "Rig #357"])
 
-# Sidebar Database Export Tool
+# Sidebar Backup Database Downloader
 st.sidebar.markdown("---")
-st.sidebar.subheader("💾 Data Management")
-json_string = json.dumps(current_inventory, indent=4)
+st.sidebar.subheader("💾 Backup Utility")
+json_string = json.dumps(st.session_state["med_data"], indent=4)
 st.sidebar.download_button(
-    label="⬇️ Download Backup Database",
+    label="⬇️ Download Session Data",
     data=json_string,
     file_name="ambulance_med_data.json",
     mime="application/json"
@@ -122,7 +120,9 @@ st.sidebar.download_button(
 
 today = datetime.date.today()
 fifteen_days_out = today + datetime.timedelta(days=15)
-rig_meds = current_inventory[selected_rig]
+
+# Direct memory-pointer linkage to secure active mutations
+rig_meds = st.session_state["med_data"][selected_rig]
 
 # --- SECTION 1: METRICS & ALERTS ---
 st.subheader("⚠️ Critical Discrepancy & Expiration Logs")
@@ -182,6 +182,3 @@ for m in rig_meds:
     if is_narc:
         expander_title = "🔒 %s (Paramedic Only)" % expander_title
 
-    with st.expander(expander_title):
-        c1, c2 = st.columns(2)
-        
