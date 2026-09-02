@@ -104,17 +104,39 @@ st.set_page_config(page_title="Ambulance Med Check", layout="wide")
 if "med_data" not in st.session_state:
     st.session_state["med_data"] = json.loads(json.dumps(INITIAL_DATA))
 
-# --- 3. ZERO-DEPENDENCY NATIVE STORAGE SYNC ---
+# --- 3. FLATTENED STORAGE BACKEND FUNCTIONS (PREVENTS PARSER HANGS) ---
+def fetch_github_sha_signature(url, token):
+    try:
+        req_get = urllib.request.Request(url)
+        req_get.add_header("Authorization", f"token {token}")
+        with urllib.request.urlopen(req_get, timeout=3) as r:
+            return json.loads(r.read().decode())["sha"]
+    except Exception:
+        return ""
+
+def execute_remote_github_put(url, token, payload):
+    try:
+        req_put = urllib.request.Request(url, method="PUT", data=json.dumps(payload).encode('utf-8'))
+        req_put.add_header("Authorization", f"token {token}")
+        req_put.add_header("Content-Type", "application/json")
+        with urllib.request.urlopen(req_put, timeout=5) as r:
+            return json.loads(r.read().decode())["content"]["sha"]
+    except Exception:
+        return None
+
 def load_synchronized_data():
     if st.session_state.get("data_synced_once"):
         return st.session_state["med_data"]
         
-    if "GITHUB_TOKEN" in st.secrets and "GITHUB_REPO" in st.secrets:
+    has_token = "GITHUB_TOKEN" in st.secrets
+    has_repo = "GITHUB_REPO" in st.secrets
+    
+    if has_token and has_repo:
         try:
             token = st.secrets["GITHUB_TOKEN"]
             repo = st.secrets["GITHUB_REPO"]
             f_path = st.secrets.get("GITHUB_FILE_PATH", "med_data.json")
-            url = f"https://github.com{repo}/contents/{f_path}"
+            url = f"https://api.github.com/repos/{repo}/contents/{f_path}"
             
             req = urllib.request.Request(url)
             req.add_header("Authorization", f"token {token}")
@@ -133,30 +155,17 @@ def load_synchronized_data():
 
 def save_synchronized_data(updated_data):
     st.session_state["med_data"] = updated_data
-    if "GITHUB_TOKEN" in st.secrets and "GITHUB_REPO" in st.secrets:
-        try:
-            token = st.secrets["GITHUB_TOKEN"]
-            repo = st.secrets["GITHUB_REPO"]
-            f_path = st.secrets.get("GITHUB_FILE_PATH", "med_data.json")
-            url = f"https://github.com{repo}/contents/{f_path}"
-            
-            if "github_sha" not in st.session_state:
-                try:
-                    req_get = urllib.request.Request(url)
-                    req_get.add_header("Authorization", f"token {token}")
-                    with urllib.request.urlopen(req_get, timeout=3) as r:
-                        st.session_state["github_sha"] = json.loads(r.read().decode())["sha"]
-                except Exception:
-                    st.session_state["github_sha"] = ""
+    
+    has_token = "GITHUB_TOKEN" in st.secrets
+    has_repo = "GITHUB_REPO" in st.secrets
+    
+    if not (has_token and has_repo):
+        st.sidebar.warning("💾 Saved locally (Check Streamlit Secrets).")
+        return
 
-            json_bytes = json.dumps(updated_data, indent=4).encode('utf-8')
-            encoded_content = base64.b64encode(json_bytes).decode('utf-8')
-            
-            payload = {
-                "message": "EMS Logistics Update",
-                "content": encoded_content
-            }
-            if st.session_state.get("github_sha"):
-                payload["sha"] = st.session_state["github_sha"]
-                
-            req_put = urllib.request.Request(url, method="PUT", data=json.dumps(payload).encode('utf-8'))
+    token = st.secrets["GITHUB_TOKEN"]
+    repo = st.secrets["GITHUB_REPO"]
+    f_path = st.secrets.get("GITHUB_FILE_PATH", "med_data.json")
+    url = f"https://api.github.com/repos/{repo}/contents/{f_path}"
+    
+    if "github_sha" not in st.session_state:
