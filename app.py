@@ -2,101 +2,101 @@ import streamlit as st
 import datetime
 import json
 
-# --- 1. FULL COMPLEMENT INVENTORY MANIFEST ---
+# --- 1. THE COMPLETE AMBULANCE INVENTORY MANIFEST ---
 INITIAL_DATA = {
     "Rig #356": [
-        {"id": "1", "name": "Adenosine", "count": 5, "expiry": "2027-05-12"},
-        {"id": "2", "name": "Albuterol", "count": 2, "expiry": "2026-10-01"},
-        {"id": "3", "name": "Amiodarone", "count": 3, "expiry": "2028-01-15"},
-        {"id": "4", "name": "Aspirin", "count": 2, "expiry": "2026-12-31"},
-        {"id": "5", "name": "Atropine", "count": 2, "expiry": "2027-05-12"},
-        {"id": "6", "name": "Benadryl (IV)", "count": 1, "expiry": "2026-10-01"},
-        {"id": "7", "name": "Benadryl (Oral)", "count": 2, "expiry": "2028-01-15"},
-        {"id": "8", "name": "Calcium Chloride", "count": 3, "expiry": "2026-12-31"},
-        {"id": "9", "name": "Calcium Gluconate", "count": 0, "expiry": "2027-05-12"},
-        {"id": "10", "name": "Cardizem", "count": 1, "expiry": "2026-10-01"},
-        {"id": "11", "name": "Dextrose (Oral)", "count": 2, "expiry": "2028-01-15"},
-        {"id": "12", "name": "Dextrose (D10)", "count": 1, "expiry": "2026-12-31"},
-        {"id": "13", "name": "Dextrose (D50)", "count": 1, "expiry": "2027-05-12"},
-        {"id": "14", "name": "Diazepam (Valium)", "count": 2, "expiry": "2026-10-01"},
-        {"id": "15", "name": "Dilaudid", "count": 1, "expiry": "2028-01-15"},
-        {"id": "16", "name": "Droperidol", "count": 2, "expiry": "2026-12-31"},
-        {"id": "17", "name": "DuoNeb", "count": 4, "expiry": "2027-05-12"},
-        {"id": "18", "name": "Epi (IV) 1:10,000", "count": 2, "expiry": "2026-10-01"},
-        {"id": "19", "name": "Epi (IM) 1:1,000", "count": 2, "expiry": "2028-01-15"},
-        {"id": "20", "name": "Etomidate", "count": 8, "expiry": "2026-12-31"},
-        {"id": "21", "name": "Fentanyl", "count": 4, "expiry": "2027-05-12"},
-        {"id": "22", "name": "Glucagon", "count": 2, "expiry": "2026-10-01"},
-        {"id": "23", "name": "Haldol", "count": 4, "expiry": "2028-01-15"},
-        {"id": "24", "name": "Ketamine", "count": 2, "expiry": "2026-12-31"},
-        {"id": "25", "name": "Labetalol", "count": 2, "expiry": "2027-05-12"},
-        {"id": "26", "name": "Lidocaine", "count": 3, "expiry": "2026-10-01"},
-        {"id": "27", "name": "Mag Sulfate", "count": 2, "expiry": "2028-01-15"},
-        {"id": "28", "name": "Metoprolol", "count": 2, "expiry": "2026-12-31"},
+        {"name": "Adenosine", "count": 5, "expiry": "2027-05-12"},
+        {"name": "Albuterol", "count": 2, "expiry": "2026-10-01"},
+        {"name": "Amiodarone", "count": 3, "expiry": "2028-01-15"},
+        {"name": "Aspirin", "count": 2, "expiry": "2026-12-31"},
+        {"name": "Atropine", "count": 2, "expiry": "2027-05-12"},
+        {"name": "Benadryl (IV)", "count": 1, "expiry": "2026-10-01"},
+        {"name": "Benadryl (Oral)", "count": 2, "expiry": "2028-01-15"},
+        {"name": "Calcium Chloride", "count": 3, "expiry": "2026-12-31"},
+        {"name": "Calcium Gluconate", "count": 0, "expiry": "2027-05-12"},
+        {"name": "Cardizem", "count": 1, "expiry": "2026-10-01"},
+        {"name": "Dextrose (Oral)", "count": 2, "expiry": "2028-01-15"},
+        {"name": "Dextrose (D10)", "count": 1, "expiry": "2026-12-31"},
+        {"name": "Dextrose (D50)", "count": 1, "expiry": "2027-05-12"},
+        {"name": "Diazepam (Valium)", "count": 2, "expiry": "2026-10-01"},
+        {"name": "Dilaudid", "count": 1, "expiry": "2028-01-15"},
+        {"name": "Droperidol", "count": 2, "expiry": "2026-12-31"},
+        {"name": "DuoNeb", "count": 4, "expiry": "2027-05-12"},
+        {"name": "Epi (IV) 1:10,000", "count": 2, "expiry": "2026-10-01"},
+        {"name": "Epi (IM) 1:1,000", "count": 2, "expiry": "2028-01-15"},
+        {"name": "Etomidate", "count": 8, "expiry": "2026-12-31"},
+        {"name": "Fentanyl", "count": 4, "expiry": "2027-05-12"},
+        {"name": "Glucagon", "count": 2, "expiry": "2026-10-01"},
+        {"name": "Haldol", "count": 4, "expiry": "2028-01-15"},
+        {"name": "Ketamine", "count": 2, "expiry": "2026-12-31"},
+        {"name": "Labetalol", "count": 2, "expiry": "2027-05-12"},
+        {"name": "Lidocaine", "count": 3, "expiry": "2026-10-01"},
+        {"name": "Mag Sulfate", "count": 2, "expiry": "2028-01-15"},
+        {"name": "Metoprolol", "count": 2, "expiry": "2026-12-31"},
         {"id": "29", "name": "Midazolam", "count": 2, "expiry": "2028-01-15"},
-        {"id": "30", "name": "Narcan", "count": 2, "expiry": "2026-12-31"},
-        {"id": "31", "name": "Nitro (Tabs)", "count": 2, "expiry": "2027-05-12"},
-        {"id": "32", "name": "Nitro (IV)", "count": 2, "expiry": "2026-10-01"},
-        {"id": "33", "name": "Propofol", "count": 1, "expiry": "2028-01-15"},
-        {"id": "34", "name": "Racemic Epi", "count": 1, "expiry": "2026-12-31"},
-        {"id": "35", "name": "Rocuronium", "count": 1, "expiry": "2027-05-12"},
-        {"id": "36", "name": "Sodium Bicarbonate", "count": 2, "expiry": "2026-10-01"},
-        {"id": "37", "name": "Succinylcholine", "count": 2, "expiry": "2028-01-15"},
-        {"id": "38", "name": "Terbutaline", "count": 4, "expiry": "2026-12-31"},
-        {"id": "39", "name": "Toradol", "count": 0, "expiry": "2027-05-12"},
-        {"id": "40", "name": "Tetracaine (eye drop)", "count": 2, "expiry": "2026-10-01"},
-        {"id": "41", "name": "Vecuronium", "count": 2, "expiry": "2028-01-15"},
-        {"id": "42", "name": "Zofran", "count": 1, "expiry": "2026-12-31"}
+        {"name": "Narcan", "count": 2, "expiry": "2026-12-31"},
+        {"name": "Nitro (Tabs)", "count": 2, "expiry": "2027-05-12"},
+        {"name": "Nitro (IV)", "count": 2, "expiry": "2026-10-01"},
+        {"name": "Propofol", "count": 1, "expiry": "2028-01-15"},
+        {"name": "Racemic Epi", "count": 1, "expiry": "2026-12-31"},
+        {"name": "Rocuronium", "count": 1, "expiry": "2027-05-12"},
+        {"name": "Sodium Bicarbonate", "count": 2, "expiry": "2026-10-01"},
+        {"name": "Succinylcholine", "count": 2, "expiry": "2028-01-15"},
+        {"name": "Terbutaline", "count": 4, "expiry": "2026-12-31"},
+        {"name": "Toradol", "count": 0, "expiry": "2027-05-12"},
+        {"name": "Tetracaine (eye drop)", "count": 2, "expiry": "2026-10-01"},
+        {"name": "Vecuronium", "count": 2, "expiry": "2028-01-15"},
+        {"name": "Zofran", "count": 1, "expiry": "2026-12-31"}
     ],
     "Rig #357": [
-        {"id": "1", "name": "Adenosine", "count": 5, "expiry": "2027-05-12"},
-        {"id": "2", "name": "Albuterol", "count": 2, "expiry": "2026-10-01"},
-        {"id": "3", "name": "Amiodarone", "count": 3, "expiry": "2028-01-15"},
-        {"id": "4", "name": "Aspirin", "count": 2, "expiry": "2026-12-31"},
-        {"id": "5", "name": "Atropine", "count": 2, "expiry": "2027-05-12"},
-        {"id": "6", "name": "Benadryl (IV)", "count": 1, "expiry": "2026-10-01"},
-        {"id": "7", "name": "Benadryl (Oral)", "count": 2, "expiry": "2028-01-15"},
-        {"id": "8", "name": "Calcium Chloride", "count": 3, "expiry": "2026-12-31"},
-        {"id": "9", "name": "Calcium Gluconate", "count": 0, "expiry": "2027-05-12"},
-        {"id": "10", "name": "Cardizem", "count": 1, "expiry": "2026-10-01"},
-        {"id": "11", "name": "Dextrose (Oral)", "count": 2, "expiry": "2028-01-15"},
-        {"id": "12", "name": "Dextrose (D10)", "count": 1, "expiry": "2026-12-31"},
-        {"id": "13", "name": "Dextrose (D50)", "count": 1, "expiry": "2027-05-12"},
-        {"id": "14", "name": "Diazepam (Valium)", "count": 2, "expiry": "2026-10-01"},
-        {"id": "15", "name": "Dilaudid", "count": 1, "expiry": "2028-01-15"},
-        {"id": "16", "name": "Droperidol", "count": 2, "expiry": "2026-12-31"},
-        {"id": "17", "name": "DuoNeb", "count": 4, "expiry": "2027-05-12"},
-        {"id": "18", "name": "Epi (IV) 1:10,000", "count": 2, "expiry": "2026-10-01"},
-        {"id": "19", "name": "Epi (IM) 1:1,000", "count": 2, "expiry": "2028-01-15"},
-        {"id": "20", "name": "Etomidate", "count": 8, "expiry": "2026-12-31"},
-        {"id": "21", "name": "Fentanyl", "count": 4, "expiry": "2027-05-12"},
-        {"id": "22", "name": "Glucagon", "count": 2, "expiry": "2026-10-01"},
-        {"id": "23", "name": "Haldol", "count": 4, "expiry": "2028-01-15"},
-        {"id": "24", "name": "Ketamine", "count": 2, "expiry": "2026-12-31"},
-        {"id": "25", "name": "Labetalol", "count": 2, "expiry": "2027-05-12"},
-        {"id": "26", "name": "Lidocaine", "count": 3, "expiry": "2026-10-01"},
-        {"id": "27", "name": "Mag Sulfate", "count": 2, "expiry": "2028-01-15"},
-        {"id": "28", "name": "Metoprolol", "count": 2, "expiry": "2026-12-31"},
-        {"id": "29", "name": "Midazolam", "count": 2, "expiry": "2028-01-15"},
-        {"id": "30", "name": "Narcan", "count": 2, "expiry": "2026-12-31"},
-        {"id": "31", "name": "Nitro (Tabs)", "count": 2, "expiry": "2027-05-12"},
-        {"id": "32", "name": "Nitro (IV)", "count": 2, "expiry": "2026-10-01"},
-        {"id": "33", "name": "Propofol", "count": 1, "expiry": "2028-01-15"},
-        {"id": "34", "name": "Racemic Epi", "count": 1, "expiry": "2026-12-31"},
-        {"id": "35", "name": "Rocuronium", "count": 1, "expiry": "2027-05-12"},
-        {"id": "36", "name": "Sodium Bicarbonate", "count": 2, "expiry": "2026-10-01"},
-        {"id": "37", "name": "Succinylcholine", "count": 2, "expiry": "2028-01-15"},
-        {"id": "38", "name": "Terbutaline", "count": 4, "expiry": "2026-12-31"},
-        {"id": "39", "name": "Toradol", "count": 0, "expiry": "2027-05-12"},
-        {"id": "40", "name": "Tetracaine (eye drop)", "count": 2, "expiry": "2026-10-01"},
-        {"id": "41", "name": "Vecuronium", "count": 2, "expiry": "2028-01-15"},
-        {"id": "42", "name": "Zofran", "count": 1, "expiry": "2026-12-31"}
+        {"name": "Adenosine", "count": 5, "expiry": "2027-05-12"},
+        {"name": "Albuterol", "count": 2, "expiry": "2026-10-01"},
+        {"name": "Amiodarone", "count": 3, "expiry": "2028-01-15"},
+        {"name": "Aspirin", "count": 2, "expiry": "2026-12-31"},
+        {"name": "Atropine", "count": 2, "expiry": "2027-05-12"},
+        {"name": "Benadryl (IV)", "count": 1, "expiry": "2026-10-01"},
+        {"name": "Benadryl (Oral)", "count": 2, "expiry": "2028-01-15"},
+        {"name": "Calcium Chloride", "count": 3, "expiry": "2026-12-31"},
+        {"name": "Calcium Gluconate", "count": 0, "expiry": "2027-05-12"},
+        {"name": "Cardizem", "count": 1, "expiry": "2026-10-01"},
+        {"name": "Dextrose (Oral)", "count": 2, "expiry": "2028-01-15"},
+        {"name": "Dextrose (D10)", "count": 1, "expiry": "2026-12-31"},
+        {"name": "Dextrose (D50)", "count": 1, "expiry": "2027-05-12"},
+        {"name": "Diazepam (Valium)", "count": 2, "expiry": "2026-10-01"},
+        {"name": "Dilaudid", "count": 1, "expiry": "2028-01-15"},
+        {"name": "Droperidol", "count": 2, "expiry": "2026-12-31"},
+        {"name": "DuoNeb", "count": 4, "expiry": "2027-05-12"},
+        {"name": "Epi (IV) 1:10,000", "count": 2, "expiry": "2026-10-01"},
+        {"name": "Epi (IM) 1:1,000", "count": 2, "expiry": "2028-01-15"},
+        {"name": "Etomidate", "count": 8, "expiry": "2026-12-31"},
+        {"name": "Fentanyl", "count": 4, "expiry": "2027-05-12"},
+        {"name": "Glucagon", "count": 2, "expiry": "2026-10-01"},
+        {"name": "Haldol", "count": 4, "expiry": "2028-01-15"},
+        {"name": "Ketamine", "count": 2, "expiry": "2026-12-31"},
+        {"name": "Labetalol", "count": 2, "expiry": "2027-05-12"},
+        {"name": "Lidocaine", "count": 3, "expiry": "2026-10-01"},
+        {"name": "Mag Sulfate", "count": 2, "expiry": "2028-01-15"},
+        {"name": "Metoprolol", "count": 2, "expiry": "2026-12-31"},
+        {"name": "Midazolam", "count": 2, "expiry": "2028-01-15"},
+        {"name": "Narcan", "count": 2, "expiry": "2026-12-31"},
+        {"name": "Nitro (Tabs)", "count": 2, "expiry": "2027-05-12"},
+        {"name": "Nitro (IV)", "count": 2, "expiry": "2026-10-01"},
+        {"name": "Propofol", "count": 1, "expiry": "2028-01-15"},
+        {"name": "Racemic Epi", "count": 1, "expiry": "2026-12-31"},
+        {"name": "Rocuronium", "count": 1, "expiry": "2027-05-12"},
+        {"name": "Sodium Bicarbonate", "count": 2, "expiry": "2026-10-01"},
+        {"name": "Succinylcholine", "count": 2, "expiry": "2028-01-15"},
+        {"name": "Terbutaline", "count": 4, "expiry": "2026-12-31"},
+        {"name": "Toradol", "count": 0, "expiry": "2027-05-12"},
+        {"name": "Tetracaine (eye drop)", "count": 2, "expiry": "2026-10-01"},
+        {"name": "Vecuronium", "count": 2, "expiry": "2028-01-15"},
+        {"name": "Zofran", "count": 1, "expiry": "2026-12-31"}
     ]
 }
 
 NARCOTICS = ["Diazepam (Valium)", "Dilaudid", "Fentanyl", "Ketamine", "Midazolam", "Propofol"]
 
-# --- CRITICAL TRACKING FIX: FORCE IN-MEMORY PERSISTENCE ---
+# Stable session initialization step
 if "med_data" not in st.session_state:
     st.session_state["med_data"] = json.loads(json.dumps(INITIAL_DATA))
 
@@ -107,12 +107,12 @@ st.sidebar.header("🛡️ Operations Hub")
 user_role = st.sidebar.selectbox("Select Your Certification Level", ["EMT / Basic", "Paramedic"])
 selected_rig = st.sidebar.radio("Active Ambulance Unit", ["Rig #356", "Rig #357"])
 
-# Sidebar Backup Database Downloader
+# Sidebar Data Export JSON Utility
 st.sidebar.markdown("---")
 st.sidebar.subheader("💾 Backup Utility")
 json_string = json.dumps(st.session_state["med_data"], indent=4)
 st.sidebar.download_button(
-    label="⬇️ Download Session Data",
+    label="⬇️ Download Backup Database",
     data=json_string,
     file_name="ambulance_med_data.json",
     mime="application/json"
@@ -121,18 +121,22 @@ st.sidebar.download_button(
 today = datetime.date.today()
 fifteen_days_out = today + datetime.timedelta(days=15)
 
-# Direct memory-pointer linkage to secure active mutations
-rig_meds = st.session_state["med_data"][selected_rig]
-
-# --- SECTION 1: METRICS & ALERTS ---
-st.subheader("⚠️ Critical Discrepancy & Expiration Logs")
+# --- FILTER PRIVILEGES & COMPUTE ALERTS ---
+raw_meds = st.session_state["med_data"][selected_rig]
+visible_meds = []
 
 empty_meds = []
 low_meds = []
 expiring_meds = []
 all_expiration_dates = []
 
-for med in rig_meds:
+for med in raw_meds:
+    is_narc = med["name"] in NARCOTICS
+    if is_narc and user_role == "EMT / Basic":
+        continue  # Narcotic wall filter
+        
+    visible_meds.append(med)
+    
     try:
         exp_date = datetime.datetime.strptime(med["expiry"], "%Y-%m-%d").date()
         all_expiration_dates.append(exp_date)
@@ -149,8 +153,10 @@ for med in rig_meds:
 
 earliest_expiry_date = min(all_expiration_dates) if all_expiration_dates else "N/A"
 
+# --- SECTION 1: METRICS & ALERTS ---
+st.subheader("⚠️ Critical Discrepancy & Expiration Logs")
 col1, col2, col3, col4 = st.columns(4)
-col1.metric("Earliest System Expiration", str(earliest_expiry_date))
+col1.metric("Earliest Expiration Date", str(earliest_expiry_date))
 col2.error("🚨 Out of Stock (%d)" % len(empty_meds))
 col3.warning("⚠️ Low Inventory (%d)" % len(low_meds))
 col4.info("⏳ Expiring Soon (%d)" % len(expiring_meds))
@@ -164,21 +170,36 @@ if expiring_meds:
 
 st.divider()
 
-# --- SECTION 2: LIVE MANAGEMENT MATRIX ---
-st.subheader("📊 Active Operations Matrix — %s" % selected_rig)
+# --- SECTION 2: THE FLAT INTERACTIVE MATRIX GRID ---
+st.subheader("📊 Active Operations Grid — %s" % selected_rig)
+st.markdown("Adjust quantities and expiration dates directly inside the data grid below:")
 
-for m in rig_meds:
-    is_narc = m["name"] in NARCOTICS
-    if is_narc and user_role == "EMT / Basic":
-        continue
-        
-    status_indicator = "🟢 OK"
-    if m["count"] == 0:
-        status_indicator = "🔴 EMPTY"
-    elif m["count"] == 1:
-        status_indicator = "🟡 LOW"
+# Display the flat matrix grid using Streamlit's robust native data editor
+edited_data = st.data_editor(
+    visible_meds,
+    column_config={
+        "name": st.column_config.TextColumn("Medication Name", disabled=True),
+        "count": st.column_config.NumberColumn("Quantity on Hand", min_value=0, step=1, required=True),
+        "expiry": st.column_config.TextColumn("Expiration Date (YYYY-MM-DD)", required=True),
+    },
+    hide_index=True,
+    use_container_width=True,
+    key="grid_editor"
+)
 
-    expander_title = "%s | %s — Available: %d | Expiry: %s" % (status_indicator, m['name'], m['count'], m['expiry'])
-    if is_narc:
-        expander_title = "🔒 %s (Paramedic Only)" % expander_title
+# Process row mutations safely without dynamic key tracking drops
+if st.button("💾 Save Matrix Changes", type="primary"):
+    # Re-merge the updated visible records back into the master workspace state
+    for updated_item in edited_data:
+        for original_item in raw_meds:
+            if original_item["name"] == updated_item["name"]:
+                original_item["count"] = updated_item["count"]
+                original_item["expiry"] = updated_item["expiry"]
+    
+    st.success("✅ Changes committed to current session cache successfully!")
+    st.rerun()
 
+st.divider()
+
+# --- SECTION 3: SUMMARY EXPORTER BLOCK ---
+st.subheader("📋 Shift Summary Text Exporter")
