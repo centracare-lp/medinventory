@@ -175,3 +175,6 @@ for med in rig_meds:
         low_meds.append(med["name"])
         
     if exp_date <= fifteen_days_out:
+        expiring_meds.append(f"{med['name']} (Exp: {med['expiry']})")
+
+earliest_expiry = min(dates_list) if dates_list else "None"
