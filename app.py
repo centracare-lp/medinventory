@@ -96,7 +96,7 @@ INITIAL_DATA = {
 
 NARCOTICS = ["Diazepam (Valium)", "Dilaudid", "Fentanyl", "Ketamine", "Midazolam", "Propofol"]
 
-# Safe browser memory allocation
+# Establish operational session state
 if "med_data" not in st.session_state:
     st.session_state["med_data"] = json.loads(json.dumps(INITIAL_DATA))
 
@@ -108,6 +108,17 @@ st.title("🚑 Ambulance Med Check Dashboard")
 st.sidebar.header("🛡️ Operations Hub")
 user_role = st.sidebar.selectbox("Select Your Certification Level", ["EMT / Basic", "Paramedic"])
 selected_rig = st.sidebar.radio("Active Ambulance Unit", ["Rig #356", "Rig #357"])
+
+# Sidebar Database Export Tool
+st.sidebar.markdown("---")
+st.sidebar.subheader("💾 Data Management")
+json_string = json.dumps(current_inventory, indent=4)
+st.sidebar.download_button(
+    label="⬇️ Download Backup Database",
+    data=json_string,
+    file_name="ambulance_med_data.json",
+    mime="application/json"
+)
 
 today = datetime.date.today()
 fifteen_days_out = today + datetime.timedelta(days=15)
@@ -174,6 +185,3 @@ for m in rig_meds:
     with st.expander(expander_title):
         c1, c2 = st.columns(2)
         
-        with c1:
-            st.markdown("**Track Medication Consumption**")
-            qty_used = st.number_input("Log Quantity Consumed", min_value=0, max_value=int(m['count']), step=1, key="use_%s_%s" % (selected_rig, m['id']))
