@@ -1,7 +1,6 @@
 import streamlit as st
 import datetime
 import json
-from github import Github
 
 # --- 1. THE COMPLETE REPOSITORY MEDICATION DATASET ---
 INITIAL_DATA = {
@@ -97,14 +96,25 @@ INITIAL_DATA = {
 
 NARCOTICS = ["Diazepam (Valium)", "Dilaudid", "Fentanyl", "Ketamine", "Midazolam", "Propofol"]
 
-# --- 2. GITHUB HARD DATA PERSISTENCE LINK ---
+# --- 2. LAYOUT STAGE INITIALIZATION ---
+st.set_page_config(page_title="Ambulance Med Check", layout="wide")
+st.title("🚑 Ambulance Med Check Dashboard")
+
+# Safeguard Session Storage directly at application launch to bypass any API hangs
+if "med_data" not in st.session_state:
+    st.session_state["med_data"] = json.loads(json.dumps(INITIAL_DATA))
+
+# --- 3. SAFE GITHUB INTEGRATION LAYER ---
 def load_synchronized_data():
-    if "med_data" in st.session_state:
+    # If the user has already manipulated local session variables, retain them immediately
+    if "data_initialized" in st.session_state:
         return st.session_state["med_data"]
         
-    # Check if configurations are filled out in the streamcloud secrets vault
+    # Check if API keys are set up inside the dashboard secrets box
     if "GITHUB_TOKEN" in st.secrets and "GITHUB_REPO" in st.secrets:
         try:
+            # Lazy import inside the safety loop to prevent system boot lockouts
+            from github import Github
             g = Github(st.secrets["GITHUB_TOKEN"])
             repo = g.get_repo(st.secrets["GITHUB_REPO"])
             file_path = st.secrets.get("GITHUB_FILE_PATH", "med_data.json")
@@ -112,70 +122,37 @@ def load_synchronized_data():
             file_contents = repo.get_contents(file_path)
             synced_data = json.loads(file_contents.decoded_content.decode())
             st.session_state["med_data"] = synced_data
+            st.session_state["data_initialized"] = True
             return synced_data
-        except Exception:
-            # Fallback seamlessly to local session states if file doesn't exist yet
-            pass
-
-    st.session_state["med_data"] = json.loads(json.dumps(INITIAL_DATA))
+        except Exception as e:
+            # Silent catch: If GitHub fails, log a note in the console but DO NOT crash the UI
+            st.sidebar.error(f"GitHub Link Offline: Using Local Complement Tracker.")
+            
+    st.session_state["data_initialized"] = True
     return st.session_state["med_data"]
 
 def save_synchronized_data(updated_data):
     st.session_state["med_data"] = updated_data
     if "GITHUB_TOKEN" in st.secrets and "GITHUB_REPO" in st.secrets:
         try:
+            from github import Github
             g = Github(st.secrets["GITHUB_TOKEN"])
             repo = g.get_repo(st.secrets["GITHUB_REPO"])
             file_path = st.secrets.get("GITHUB_FILE_PATH", "med_data.json")
             
             try:
                 file_contents = repo.get_contents(file_path)
-                repo.update_file(file_path, "EMS Database Sync: Check update", json.dumps(updated_data, indent=4), file_contents.sha)
+                repo.update_file(file_path, "EMS Log Check Update", json.dumps(updated_data, indent=4), file_contents.sha)
             except Exception:
-                repo.create_file(file_path, "EMS Database Sync: Initialize Data File", json.dumps(updated_data, indent=4))
+                repo.create_file(file_path, "EMS Log Check Initialize", json.dumps(updated_data, indent=4))
             st.sidebar.success("💾 Automatically synced to GitHub!")
             return
         except Exception as e:
-            st.sidebar.error(f"Sync Issue: {str(e)}")
-    st.sidebar.warning("⚠️ Saved to browser memory only (Check Streamlit Secrets).")
+            st.sidebar.error(f"Write Sync Issue: {str(e)}")
+    st.sidebar.warning("💾 Saved to local vehicle memory session only.")
 
-# --- 3. LAYOUT INITIALIZATION ---
-st.set_page_config(page_title="Ambulance Med Check", layout="wide")
-st.title("🚑 Ambulance Med Check Dashboard")
-
+# Initialize dataset using the safe routing architecture
 current_inventory = load_synchronized_data()
 
 # --- 4. CONTROLS INTERFACE ---
 st.sidebar.header("🛡️ Operations Hub")
-user_role = st.sidebar.selectbox("Select Your Certification Level", ["EMT / Basic", "Paramedic"])
-selected_rig = st.sidebar.radio("Active Ambulance Unit", ["Rig #356", "Rig #357"])
-
-# Expiration Boundaries Setup
-today = datetime.date.today()
-fifteen_days_out = today + datetime.timedelta(days=15)
-rig_meds = current_inventory[selected_rig]
-
-# --- SECTION 1: METRICS & ALERTS ---
-st.subheader("⚠️ Critical Discrepancy & Expiration Logs")
-
-empty_meds = []
-low_meds = []
-expiring_meds = []
-all_expiration_dates = []
-
-for med in rig_meds:
-    try:
-        exp_date = datetime.datetime.strptime(med["expiry"], "%Y-%m-%d").date()
-        all_expiration_dates.append(exp_date)
-    except ValueError:
-        continue # Safely skip if a date string is broken or corrupt
-        
-    if med["count"] == 0:
-        empty_meds.append(med["name"])
-    elif med["count"] == 1:
-        low_meds.append(med["name"])
-        
-    if exp_date <= fifteen_days_out:
-        expiring_meds.append(f"{med['name']} ({med['expiry']})")
-
-earliest_expiry_date = min(all_expiration_dates) if all_expiration_dates else "N/A"
