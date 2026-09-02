@@ -1,8 +1,6 @@
 import streamlit as st
 import datetime
 import json
-import urllib.request
-import base64
 
 # --- 1. FULL COMPLEMENT INVENTORY MANIFEST ---
 INITIAL_DATA = {
@@ -98,68 +96,84 @@ INITIAL_DATA = {
 
 NARCOTICS = ["Diazepam (Valium)", "Dilaudid", "Fentanyl", "Ketamine", "Midazolam", "Propofol"]
 
-# Safe browser state tracking
+# Safe browser memory allocation
 if "med_data" not in st.session_state:
     st.session_state["med_data"] = json.loads(json.dumps(INITIAL_DATA))
 
-# --- 2. ZERO-DEPENDENCY STORAGE FUNCTIONS ---
-def check_secrets_exist():
-    if "GITHUB_TOKEN" in st.secrets and "GITHUB_REPO" in st.secrets:
-        return True
-    return False
+current_inventory = st.session_state["med_data"]
 
-def load_synchronized_data():
-    if st.session_state.get("data_synced_once"):
-        return st.session_state["med_data"]
-    if check_secrets_exist():
-        try:
-            token = st.secrets["GITHUB_TOKEN"]
-            repo = st.secrets["GITHUB_REPO"]
-            f_path = st.secrets.get("GITHUB_FILE_PATH", "med_data.json")
-            url = f"https://api.github.com/repos/{repo}/contents/{f_path}"
-            
-            req = urllib.request.Request(url)
-            req.add_header("Authorization", f"token {token}")
-            req.add_header("Accept", "application/vnd.github.v3+json")
-            
-            with urllib.request.urlopen(req, timeout=3) as response:
-                res_data = json.loads(response.read().decode())
-                content_bytes = base64.b64decode(res_data["content"])
-                st.session_state["med_data"] = json.loads(content_bytes.decode())
-                st.session_state["github_sha"] = res_data["sha"]
-        except Exception:
-            pass
-    st.session_state["data_synced_once"] = True
-    return st.session_state["med_data"]
+# --- 2. USER INTERFACE GENERATION ---
+st.title("🚑 Ambulance Med Check Dashboard")
 
-def save_synchronized_data(updated_data):
-    st.session_state["med_data"] = updated_data
-    if not check_secrets_exist():
-        st.sidebar.warning("💾 Saved to browser cache.")
-        return
+st.sidebar.header("🛡️ Operations Hub")
+user_role = st.sidebar.selectbox("Select Your Certification Level", ["EMT / Basic", "Paramedic"])
+selected_rig = st.sidebar.radio("Active Ambulance Unit", ["Rig #356", "Rig #357"])
+
+today = datetime.date.today()
+fifteen_days_out = today + datetime.timedelta(days=15)
+rig_meds = current_inventory[selected_rig]
+
+# --- SECTION 1: METRICS & ALERTS ---
+st.subheader("⚠️ Critical Discrepancy & Expiration Logs")
+
+empty_meds = []
+low_meds = []
+expiring_meds = []
+all_expiration_dates = []
+
+for med in rig_meds:
     try:
-        token = st.secrets["GITHUB_TOKEN"]
-        repo = st.secrets["GITHUB_REPO"]
-        f_path = st.secrets.get("GITHUB_FILE_PATH", "med_data.json")
-        url = f"https://api.github.com/repos/{repo}/contents/{f_path}"
-        
-        current_sha = st.session_state.get("github_sha", "")
-        if not current_sha:
-            try:
-                req_get = urllib.request.Request(url)
-                req_get.add_header("Authorization", f"token {token}")
-                with urllib.request.urlopen(req_get, timeout=2) as r:
-                    current_sha = json.loads(r.read().decode())["sha"]
-                    st.session_state["github_sha"] = current_sha
-            except Exception:
-                current_sha = ""
+        exp_date = datetime.datetime.strptime(med["expiry"], "%Y-%m-%d").date()
+        all_expiration_dates.append(exp_date)
+    except ValueError:
+        continue
 
-        json_bytes = json.dumps(updated_data, indent=4).encode('utf-8')
-        encoded_content = base64.b64encode(json_bytes).decode('utf-8')
+    if med["count"] == 0:
+        empty_meds.append(med["name"])
+    elif med["count"] == 1:
+        low_meds.append(med["name"])
         
-        payload_dict = {"message": "EMS Logistics Update", "content": encoded_content}
-        if current_sha:
-            payload_dict["sha"] = current_sha
-            
-        req_put = urllib.request.Request(url, method="PUT", data=json.dumps(payload_dict).encode('utf-8'))
-        req_put.add_header("Authorization", f"token {token}")
+    if exp_date <= fifteen_days_out:
+        expiring_meds.append("%s (%s)" % (med['name'], med['expiry']))
+
+earliest_expiry_date = min(all_expiration_dates) if all_expiration_dates else "N/A"
+
+col1, col2, col3, col4 = st.columns(4)
+col1.metric("Earliest System Expiration", str(earliest_expiry_date))
+col2.error("🚨 Out of Stock (%d)" % len(empty_meds))
+col3.warning("⚠️ Low Inventory (%d)" % len(low_meds))
+col4.info("⏳ Expiring Soon (%d)" % len(expiring_meds))
+
+if empty_meds:
+    st.error("**CRITICAL - EMPTY:** %s" % ', '.join(empty_meds))
+if low_meds:
+    st.warning("**NOTICE - LOW STOCK (1 Left):** %s" % ', '.join(low_meds))
+if expiring_meds:
+    st.info("**NOTICE - EXPIRING < 15 DAYS:** %s" % ', '.join(expiring_meds))
+
+st.divider()
+
+# --- SECTION 2: LIVE MANAGEMENT MATRIX ---
+st.subheader("📊 Active Operations Matrix — %s" % selected_rig)
+
+for m in rig_meds:
+    is_narc = m["name"] in NARCOTICS
+    if is_narc and user_role == "EMT / Basic":
+        continue
+        
+    status_indicator = "🟢 OK"
+    if m["count"] == 0:
+        status_indicator = "🔴 EMPTY"
+    elif m["count"] == 1:
+        status_indicator = "🟡 LOW"
+
+    expander_title = "%s | %s — Available: %d | Expiry: %s" % (status_indicator, m['name'], m['count'], m['expiry'])
+    if is_narc:
+        expander_title = "🔒 %s (Paramedic Only)" % expander_title
+
+    with st.expander(expander_title):
+        c1, c2 = st.columns(2)
+        
+        with c1:
+            st.markdown("**Track Medication Consumption**")
+            qty_used = st.number_input("Log Quantity Consumed", min_value=0, max_value=int(m['count']), step=1, key="use_%s_%s" % (selected_rig, m['id']))
