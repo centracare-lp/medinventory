@@ -4,7 +4,7 @@ import json
 import urllib.request
 import base64
 
-# --- 1. MEDICATIONS DATA complement DATASET ---
+# --- 1. FULL COMPLEMENT INVENTORY MANIFEST ---
 INITIAL_DATA = {
     "Rig #356": [
         {"id": "1", "name": "Adenosine", "count": 5, "expiry": "2027-05-12"},
@@ -98,7 +98,7 @@ INITIAL_DATA = {
 
 NARCOTICS = ["Diazepam (Valium)", "Dilaudid", "Fentanyl", "Ketamine", "Midazolam", "Propofol"]
 
-# --- 2. CONFIGURATION & ENGINE INIT ---
+# --- 2. LAYOUT INITIALIZATION ---
 st.set_page_config(page_title="Ambulance Med Check", layout="wide")
 
 if "med_data" not in st.session_state:
@@ -126,7 +126,7 @@ def load_synchronized_data():
                 st.session_state["med_data"] = json.loads(content_bytes.decode())
                 st.session_state["github_sha"] = res_data["sha"]
         except Exception:
-            pass # Keep using inline inventory silently if connection drops
+            pass # Gracefully run from inline template if repo link stalls
             
     st.session_state["data_synced_once"] = True
     return st.session_state["med_data"]
@@ -140,7 +140,6 @@ def save_synchronized_data(updated_data):
             f_path = st.secrets.get("GITHUB_FILE_PATH", "med_data.json")
             url = f"https://github.com{repo}/contents/{f_path}"
             
-            # Fetch current hash signature if missing
             if "github_sha" not in st.session_state:
                 try:
                     req_get = urllib.request.Request(url)
@@ -160,3 +159,4 @@ def save_synchronized_data(updated_data):
             if st.session_state.get("github_sha"):
                 payload["sha"] = st.session_state["github_sha"]
                 
+            req_put = urllib.request.Request(url, method="PUT", data=json.dumps(payload).encode('utf-8'))
