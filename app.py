@@ -98,13 +98,12 @@ INITIAL_DATA = {
 
 NARCOTICS = ["Diazepam (Valium)", "Dilaudid", "Fentanyl", "Ketamine", "Midazolam", "Propofol"]
 
-# Cache local backup explicitly inside active layout framework 
+# Safe browser state tracking
 if "med_data" not in st.session_state:
     st.session_state["med_data"] = json.loads(json.dumps(INITIAL_DATA))
 
-# --- 2. ISOLATED REPOSITORY COMMUNICATIONS LAYER ---
+# --- 2. ZERO-DEPENDENCY STORAGE FUNCTIONS ---
 def check_secrets_exist():
-    # Structural step: returns True if keys are ready, False skips network load entirely
     if "GITHUB_TOKEN" in st.secrets and "GITHUB_REPO" in st.secrets:
         return True
     return False
@@ -112,13 +111,12 @@ def check_secrets_exist():
 def load_synchronized_data():
     if st.session_state.get("data_synced_once"):
         return st.session_state["med_data"]
-        
     if check_secrets_exist():
         try:
             token = st.secrets["GITHUB_TOKEN"]
             repo = st.secrets["GITHUB_REPO"]
             f_path = st.secrets.get("GITHUB_FILE_PATH", "med_data.json")
-            url = f"https://github.com{repo}/contents/{f_path}"
+            url = f"https://api.github.com/repos/{repo}/contents/{f_path}"
             
             req = urllib.request.Request(url)
             req.add_header("Authorization", f"token {token}")
@@ -130,25 +128,21 @@ def load_synchronized_data():
                 st.session_state["med_data"] = json.loads(content_bytes.decode())
                 st.session_state["github_sha"] = res_data["sha"]
         except Exception:
-            pass # Continues instantly to next block if internet blinks
-            
+            pass
     st.session_state["data_synced_once"] = True
     return st.session_state["med_data"]
 
 def save_synchronized_data(updated_data):
     st.session_state["med_data"] = updated_data
-    
     if not check_secrets_exist():
-        st.sidebar.warning("💾 Saved to local layout memory cache.")
+        st.sidebar.warning("💾 Saved to browser cache.")
         return
-
     try:
         token = st.secrets["GITHUB_TOKEN"]
         repo = st.secrets["GITHUB_REPO"]
         f_path = st.secrets.get("GITHUB_FILE_PATH", "med_data.json")
-        url = f"https://github.com{repo}/contents/{f_path}"
+        url = f"https://api.github.com/repos/{repo}/contents/{f_path}"
         
-        # Read file status parameters safely before updating lines
         current_sha = st.session_state.get("github_sha", "")
         if not current_sha:
             try:
@@ -163,4 +157,9 @@ def save_synchronized_data(updated_data):
         json_bytes = json.dumps(updated_data, indent=4).encode('utf-8')
         encoded_content = base64.b64encode(json_bytes).decode('utf-8')
         
-        payload = {
+        payload_dict = {"message": "EMS Logistics Update", "content": encoded_content}
+        if current_sha:
+            payload_dict["sha"] = current_sha
+            
+        req_put = urllib.request.Request(url, method="PUT", data=json.dumps(payload_dict).encode('utf-8'))
+        req_put.add_header("Authorization", f"token {token}")
