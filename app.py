@@ -1,8 +1,10 @@
 import streamlit as st
 import datetime
 import json
+import urllib.request
+import base64
 
-# --- 1. THE COMPLETE REPOSITORY MEDICATION DATASET ---
+# --- 1. MEDICATIONS DATA complement DATASET ---
 INITIAL_DATA = {
     "Rig #356": [
         {"id": "1", "name": "Adenosine", "count": 5, "expiry": "2027-05-12"},
@@ -96,63 +98,65 @@ INITIAL_DATA = {
 
 NARCOTICS = ["Diazepam (Valium)", "Dilaudid", "Fentanyl", "Ketamine", "Midazolam", "Propofol"]
 
-# --- 2. LAYOUT STAGE INITIALIZATION ---
+# --- 2. CONFIGURATION & ENGINE INIT ---
 st.set_page_config(page_title="Ambulance Med Check", layout="wide")
-st.title("🚑 Ambulance Med Check Dashboard")
 
-# Safeguard Session Storage directly at application launch to bypass any API hangs
 if "med_data" not in st.session_state:
     st.session_state["med_data"] = json.loads(json.dumps(INITIAL_DATA))
 
-# --- 3. SAFE GITHUB INTEGRATION LAYER ---
+# --- 3. ZERO-DEPENDENCY NATIVE STORAGE SYNC ---
 def load_synchronized_data():
-    # If the user has already manipulated local session variables, retain them immediately
-    if "data_initialized" in st.session_state:
+    if st.session_state.get("data_synced_once"):
         return st.session_state["med_data"]
         
-    # Check if API keys are set up inside the dashboard secrets box
     if "GITHUB_TOKEN" in st.secrets and "GITHUB_REPO" in st.secrets:
         try:
-            # Lazy import inside the safety loop to prevent system boot lockouts
-            from github import Github
-            g = Github(st.secrets["GITHUB_TOKEN"])
-            repo = g.get_repo(st.secrets["GITHUB_REPO"])
-            file_path = st.secrets.get("GITHUB_FILE_PATH", "med_data.json")
+            token = st.secrets["GITHUB_TOKEN"]
+            repo = st.secrets["GITHUB_REPO"]
+            f_path = st.secrets.get("GITHUB_FILE_PATH", "med_data.json")
+            url = f"https://github.com{repo}/contents/{f_path}"
             
-            file_contents = repo.get_contents(file_path)
-            synced_data = json.loads(file_contents.decoded_content.decode())
-            st.session_state["med_data"] = synced_data
-            st.session_state["data_initialized"] = True
-            return synced_data
-        except Exception as e:
-            # Silent catch: If GitHub fails, log a note in the console but DO NOT crash the UI
-            st.sidebar.error(f"GitHub Link Offline: Using Local Complement Tracker.")
+            req = urllib.request.Request(url)
+            req.add_header("Authorization", f"token {token}")
+            req.add_header("Accept", "application/vnd.github.v3+json")
             
-    st.session_state["data_initialized"] = True
+            with urllib.request.urlopen(req, timeout=5) as response:
+                res_data = json.loads(response.read().decode())
+                content_bytes = base64.b64decode(res_data["content"])
+                st.session_state["med_data"] = json.loads(content_bytes.decode())
+                st.session_state["github_sha"] = res_data["sha"]
+        except Exception:
+            pass # Keep using inline inventory silently if connection drops
+            
+    st.session_state["data_synced_once"] = True
     return st.session_state["med_data"]
 
 def save_synchronized_data(updated_data):
     st.session_state["med_data"] = updated_data
     if "GITHUB_TOKEN" in st.secrets and "GITHUB_REPO" in st.secrets:
         try:
-            from github import Github
-            g = Github(st.secrets["GITHUB_TOKEN"])
-            repo = g.get_repo(st.secrets["GITHUB_REPO"])
-            file_path = st.secrets.get("GITHUB_FILE_PATH", "med_data.json")
+            token = st.secrets["GITHUB_TOKEN"]
+            repo = st.secrets["GITHUB_REPO"]
+            f_path = st.secrets.get("GITHUB_FILE_PATH", "med_data.json")
+            url = f"https://github.com{repo}/contents/{f_path}"
             
-            try:
-                file_contents = repo.get_contents(file_path)
-                repo.update_file(file_path, "EMS Log Check Update", json.dumps(updated_data, indent=4), file_contents.sha)
-            except Exception:
-                repo.create_file(file_path, "EMS Log Check Initialize", json.dumps(updated_data, indent=4))
-            st.sidebar.success("💾 Automatically synced to GitHub!")
-            return
-        except Exception as e:
-            st.sidebar.error(f"Write Sync Issue: {str(e)}")
-    st.sidebar.warning("💾 Saved to local vehicle memory session only.")
+            # Fetch current hash signature if missing
+            if "github_sha" not in st.session_state:
+                try:
+                    req_get = urllib.request.Request(url)
+                    req_get.add_header("Authorization", f"token {token}")
+                    with urllib.request.urlopen(req_get, timeout=3) as r:
+                        st.session_state["github_sha"] = json.loads(r.read().decode())["sha"]
+                except:
+                    st.session_state["github_sha"] = ""
 
-# Initialize dataset using the safe routing architecture
-current_inventory = load_synchronized_data()
-
-# --- 4. CONTROLS INTERFACE ---
-st.sidebar.header("🛡️ Operations Hub")
+            json_bytes = json.dumps(updated_data, indent=4).encode('utf-8')
+            encoded_content = base64.b64encode(json_bytes).decode('utf-8')
+            
+            payload = {
+                "message": "EMS Logistics Update",
+                "content": encoded_content
+            }
+            if st.session_state.get("github_sha"):
+                payload["sha"] = st.session_state["github_sha"]
+                
