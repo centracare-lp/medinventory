@@ -104,7 +104,7 @@ st.set_page_config(page_title="Ambulance Med Check", layout="wide")
 if "med_data" not in st.session_state:
     st.session_state["med_data"] = json.loads(json.dumps(INITIAL_DATA))
 
-# --- 3. FLATTENED STORAGE BACKEND FUNCTIONS (PREVENTS PARSER HANGS) ---
+# --- 3. ZERO-DEPENDENCY STORAGE FUNCTIONS ---
 def fetch_github_sha_signature(url, token):
     try:
         req_get = urllib.request.Request(url)
@@ -127,21 +127,17 @@ def execute_remote_github_put(url, token, payload):
 def load_synchronized_data():
     if st.session_state.get("data_synced_once"):
         return st.session_state["med_data"]
-        
     has_token = "GITHUB_TOKEN" in st.secrets
     has_repo = "GITHUB_REPO" in st.secrets
-    
     if has_token and has_repo:
         try:
             token = st.secrets["GITHUB_TOKEN"]
             repo = st.secrets["GITHUB_REPO"]
             f_path = st.secrets.get("GITHUB_FILE_PATH", "med_data.json")
             url = f"https://api.github.com/repos/{repo}/contents/{f_path}"
-            
             req = urllib.request.Request(url)
             req.add_header("Authorization", f"token {token}")
             req.add_header("Accept", "application/vnd.github.v3+json")
-            
             with urllib.request.urlopen(req, timeout=5) as response:
                 res_data = json.loads(response.read().decode())
                 content_bytes = base64.b64decode(res_data["content"])
@@ -149,23 +145,20 @@ def load_synchronized_data():
                 st.session_state["github_sha"] = res_data["sha"]
         except Exception:
             pass
-            
     st.session_state["data_synced_once"] = True
     return st.session_state["med_data"]
 
 def save_synchronized_data(updated_data):
     st.session_state["med_data"] = updated_data
-    
     has_token = "GITHUB_TOKEN" in st.secrets
     has_repo = "GITHUB_REPO" in st.secrets
-    
     if not (has_token and has_repo):
-        st.sidebar.warning("💾 Saved locally (Check Streamlit Secrets).")
+        st.sidebar.warning("💾 Saved to local browser layout cache.")
         return
-
     token = st.secrets["GITHUB_TOKEN"]
     repo = st.secrets["GITHUB_REPO"]
     f_path = st.secrets.get("GITHUB_FILE_PATH", "med_data.json")
     url = f"https://api.github.com/repos/{repo}/contents/{f_path}"
-    
     if "github_sha" not in st.session_state:
+        st.session_state["github_sha"] = fetch_github_sha_signature(url, token)
+    json_bytes = json.dumps(updated_data, indent=4).encode('utf-8')
