@@ -1,194 +1,89 @@
 import streamlit as st
-import json
 import datetime
-from github import Github
 
-# --- 1. CONFIGURATION & CONSTANTS ---
-NARCOTICS = ["Diazepam (Valium)", "Dilaudid", "Fentanyl", "Ketamine", "Midazolam", "Propofol"]
-
-# Fallback data directly from your provided manifest
+# --- EMERGENCY SELF-CONTAINED DATA MANIFEST ---
 INITIAL_DATA = {
     "Rig #356": [
         {"id": "1", "name": "Adenosine", "count": 5, "expiry": "2027-05-12"},
         {"id": "2", "name": "Albuterol", "count": 2, "expiry": "2026-10-01"},
         {"id": "3", "name": "Amiodarone", "count": 3, "expiry": "2028-01-15"},
         {"id": "4", "name": "Aspirin", "count": 2, "expiry": "2026-12-31"},
-        {"id": "5", "name": "Atropine", "count": 2, "expiry": "2027-05-12"},
-        {"id": "6", "name": "Benadryl (IV)", "count": 1, "expiry": "2026-10-01"},
-        {"id": "7", "name": "Benadryl (Oral)", "count": 2, "expiry": "2028-01-15"},
-        {"id": "8", "name": "Calcium Chloride", "count": 3, "expiry": "2026-12-31"},
-        {"id": "9", "name": "Calcium Gluconate", "count": 0, "expiry": "2027-05-12"},
-        {"id": "10", "name": "Cardizem", "count": 1, "expiry": "2026-10-01"},
-        {"id": "11", "name": "Dextrose (Oral)", "count": 2, "expiry": "2028-01-15"},
-        {"id": "12", "name": "Dextrose (D10)", "count": 1, "expiry": "2026-12-31"},
-        {"id": "13", "name": "Dextrose (D50)", "count": 1, "expiry": "2027-05-12"},
         {"id": "14", "name": "Diazepam (Valium)", "count": 2, "expiry": "2026-10-01"},
-        {"id": "15", "name": "Dilaudid", "count": 1, "expiry": "2028-01-15"},
-        {"id": "16", "name": "Droperidol", "count": 2, "expiry": "2026-12-31"},
-        {"id": "17", "name": "DuoNeb", "count": 4, "expiry": "2027-05-12"},
-        {"id": "18", "name": "Epi (IV) 1:10,000", "count": 2, "expiry": "2026-10-01"},
-        {"id": "19", "name": "Epi (IM) 1:1,000", "count": 2, "expiry": "2028-01-15"},
-        {"id": "20", "name": "Etomidate", "count": 8, "expiry": "2026-12-31"},
-        {"id": "21", "name": "Fentanyl", "count": 4, "expiry": "2027-05-12"},
-        {"id": "22", "name": "Glucagon", "count": 2, "expiry": "2026-10-01"},
-        {"id": "23", "name": "Haldol", "count": 4, "expiry": "2028-01-15"},
-        {"id": "24", "name": "Ketamine", "count": 2, "expiry": "2026-12-31"},
-        {"id": "25", "name": "Labetalol", "count": 2, "expiry": "2027-05-12"},
-        {"id": "26", "name": "Lidocaine", "count": 3, "expiry": "2026-10-01"},
-        {"id": "27", "name": "Mag Sulfate", "count": 2, "expiry": "2028-01-15"},
-        {"id": "28", "name": "Metoprolol", "count": 2, "expiry": "2026-12-31"},
-        {"id": "29", "name": "Midazolam", "count": 2, "expiry": "2028-01-15"},
-        {"id": "30", "name": "Narcan", "count": 2, "expiry": "2026-12-31"},
-        {"id": "31", "name": "Nitro (Tabs)", "count": 2, "expiry": "2027-05-12"},
-        {"id": "32", "name": "Nitro (IV)", "count": 2, "expiry": "2026-10-01"},
-        {"id": "33", "name": "Propofol", "count": 1, "expiry": "2028-01-15"},
-        {"id": "34", "name": "Racemic Epi", "count": 1, "expiry": "2026-12-31"},
-        {"id": "35", "name": "Rocuronium", "count": 1, "expiry": "2027-05-12"},
-        {"id": "36", "name": "Sodium Bicarbonate", "count": 2, "expiry": "2026-10-01"},
-        {"id": "37", "name": "Succinylcholine", "count": 2, "expiry": "2028-01-15"},
-        {"id": "38", "name": "Terbutaline", "count": 4, "expiry": "2026-12-31"},
-        {"id": "39", "name": "Toradol", "count": 0, "expiry": "2027-05-12"},
-        {"id": "40", "name": "Tetracaine (eye drop)", "count": 2, "expiry": "2026-10-01"},
-        {"id": "41", "name": "Vecuronium", "count": 2, "expiry": "2028-01-15"},
-        {"id": "42", "name": "Zofran", "count": 1, "expiry": "2026-12-31"}
+        {"id": "21", "name": "Fentanyl", "count": 4, "expiry": "2027-05-12"}
     ],
     "Rig #357": [
         {"id": "1", "name": "Adenosine", "count": 5, "expiry": "2027-05-12"},
         {"id": "2", "name": "Albuterol", "count": 2, "expiry": "2026-10-01"},
-        {"id": "3", "name": "Amiodarone", "count": 3, "expiry": "2028-01-15"},
-        {"id": "4", "name": "Aspirin", "count": 2, "expiry": "2026-12-31"},
-        {"id": "5", "name": "Atropine", "count": 2, "expiry": "2027-05-12"},
-        {"id": "6", "name": "Benadryl (IV)", "count": 1, "expiry": "2026-10-01"},
-        {"id": "7", "name": "Benadryl (Oral)", "count": 2, "expiry": "2028-01-15"},
-        {"id": "8", "name": "Calcium Chloride", "count": 3, "expiry": "2026-12-31"},
-        {"id": "9", "name": "Calcium Gluconate", "count": 0, "expiry": "2027-05-12"},
-        {"id": "10", "name": "Cardizem", "count": 1, "expiry": "2026-10-01"},
-        {"id": "11", "name": "Dextrose (Oral)", "count": 2, "expiry": "2028-01-15"},
-        {"id": "12", "name": "Dextrose (D10)", "count": 1, "expiry": "2026-12-31"},
-        {"id": "13", "name": "Dextrose (D50)", "count": 1, "expiry": "2027-05-12"},
-        {"id": "14", "name": "Diazepam (Valium)", "count": 2, "expiry": "2026-10-01"},
-        {"id": "15", "name": "Dilaudid", "count": 1, "expiry": "2028-01-15"},
-        {"id": "16", "name": "Droperidol", "count": 2, "expiry": "2026-12-31"},
-        {"id": "17", "name": "DuoNeb", "count": 4, "expiry": "2027-05-12"},
-        {"id": "18", "name": "Epi (IV) 1:10,000", "count": 2, "expiry": "2026-10-01"},
-        {"id": "19", "name": "Epi (IM) 1:1,000", "count": 2, "expiry": "2028-01-15"},
-        {"id": "20", "name": "Etomidate", "count": 8, "expiry": "2026-12-31"},
-        {"id": "21", "name": "Fentanyl", "count": 4, "expiry": "2027-05-12"},
-        {"id": "22", "name": "Glucagon", "count": 2, "expiry": "2026-10-01"},
-        {"id": "23", "name": "Haldol", "count": 4, "expiry": "2028-01-15"},
-        {"id": "24", "name": "Ketamine", "count": 2, "expiry": "2026-12-31"},
-        {"id": "25", "name": "Labetalol", "count": 2, "expiry": "2027-05-12"},
-        {"id": "26", "name": "Lidocaine", "count": 3, "expiry": "2026-10-01"},
-        {"id": "27", "name": "Mag Sulfate", "count": 2, "expiry": "2028-01-15"},
-        {"id": "28", "name": "Metoprolol", "count": 2, "expiry": "2026-12-31"},
-        {"id": "29", "name": "Midazolam", "count": 2, "expiry": "2028-01-15"},
-        {"id": "30", "name": "Narcan", "count": 2, "expiry": "2026-12-31"},
-        {"id": "31", "name": "Nitro (Tabs)", "count": 2, "expiry": "2027-05-12"},
-        {"id": "32", "name": "Nitro (IV)", "count": 2, "expiry": "2026-10-01"},
-        {"id": "33", "name": "Propofol", "count": 1, "expiry": "2028-01-15"},
-        {"id": "34", "name": "Racemic Epi", "count": 1, "expiry": "2026-12-31"},
-        {"id": "35", "name": "Rocuronium", "count": 1, "expiry": "2027-05-12"},
-        {"id": "36", "name": "Sodium Bicarbonate", "count": 2, "expiry": "2026-10-01"},
-        {"id": "37", "name": "Succinylcholine", "count": 2, "expiry": "2028-01-15"},
-        {"id": "38", "name": "Terbutaline", "count": 4, "expiry": "2026-12-31"},
-        {"id": "39", "name": "Toradol", "count": 0, "expiry": "2027-05-12"},
-        {"id": "40", "name": "Tetracaine (eye drop)", "count": 2, "expiry": "2026-10-01"},
-        {"id": "41", "name": "Vecuronium", "count": 2, "expiry": "2028-01-15"},
-        {"id": "42", "name": "Zofran", "count": 1, "expiry": "2026-12-31"}
+        {"id": "14", "name": "Diazepam (Valium)", "count": 2, "expiry": "2026-10-01"}
     ]
 }
 
-# --- 2. DATA PERSISTENCE LAYER (GITHUB API - ROBUST VERSION) ---
-def load_data():
-    # If already stored in the user's active session, reuse it instantly
-    if "med_data" in st.session_state and st.session_state["med_data"]:
-        return st.session_state["med_data"]
-    
-    # Attempt live GitHub integration
-    try:
-        # Check if secrets exist before pulling them
-        if "GITHUB_TOKEN" in st.secrets and "GITHUB_REPO" in st.secrets:
-            token = st.secrets["GITHUB_TOKEN"]
-            repo_name = st.secrets["GITHUB_REPO"]
-            file_path = st.secrets.get("GITHUB_FILE_PATH", "med_data.json")
-            
-            g = Github(token)
-            repo = g.get_repo(repo_name)
-            
-            try:
-                file_contents = repo.get_contents(file_path)
-                data = json.loads(file_contents.decoded_content.decode())
-                st.session_state["med_data"] = data
-                return data
-            except Exception as github_file_err:
-                # If the token works but the file doesn't exist yet, seed it!
-                repo.create_file(file_path, "EMS App: Initialize Inventory", json.dumps(INITIAL_DATA, indent=4))
-                st.session_state["med_data"] = INITIAL_DATA
-                return INITIAL_DATA
-    except Exception as credential_err:
-        # Show a small hint message in the sidebar so you know it's in fallback mode
-        st.sidebar.info("💡 Running in local preview mode (No live GitHub sync configured yet).")
-    
-    # CRITICAL FIX: If anything fails above, forcefully load INITIAL_DATA so the screen is never blank!
-    st.session_state["med_data"] = json.loads(json.dumps(INITIAL_DATA))
-    return st.session_state["med_data"]
+NARCOTICS = ["Diazepam (Valium)", "Fentanyl"]
 
-def save_data(data):
-    st.session_state["med_data"] = data
-    try:
-        if "GITHUB_TOKEN" in st.secrets:
-            token = st.secrets["GITHUB_TOKEN"]
-            repo_name = st.secrets["GITHUB_REPO"]
-            file_path = st.secrets.get("GITHUB_FILE_PATH", "med_data.json")
-            
-            g = Github(token)
-            repo = g.get_repo(repo_name)
-            file_contents = repo.get_contents(file_path)
-            repo.update_file(file_path, "EMS App: Inventory update", json.dumps(data, indent=4), file_contents.sha)
-            st.success("✅ Changes synchronized to GitHub live file successfully!")
-            return
-    except Exception as e:
-        pass
-    st.toast("💾 Saved changes locally to browser memory!", icon="💾")
-
-# --- 3. CORE USER INTERFACE ---
 st.set_page_config(page_title="Ambulance Med Check", layout="wide")
-st.title("🚑 Ambulance Med Check Dashboard")
+st.title("🚑 Ambulance Med Check Dashboard (Fallback Mode)")
 
-current_inventory = load_data()
+# Initialize session storage safely
+if "med_data" not in st.session_state:
+    st.session_state["med_data"] = INITIAL_DATA
 
-# --- SIDEBAR CONTROL PANEL ---
-st.sidebar.header("🛡️ Authentication & Setup")
-user_role = st.sidebar.selectbox("Select Your Certification Level", ["EMT / Basic", "Paramedic"])
+current_inventory = st.session_state["med_data"]
+
+# Sidebar Selection Rules
+st.sidebar.header("🛡️ Operations Hub")
+user_role = st.sidebar.selectbox("Select Certification Level", ["EMT / Basic", "Paramedic"])
 selected_rig = st.sidebar.radio("Active Ambulance Unit", ["Rig #356", "Rig #357"])
 
-# Expiration Timeline calculation base
+# Timeline Check Setup
 today = datetime.date.today()
 fifteen_days_out = today + datetime.timedelta(days=15)
-
-# Filter medications for evaluation
 rig_meds = current_inventory[selected_rig]
 
-# --- SECTION 1: SYSTEM CRITICAL ALERTS ---
-st.subheader("⚠️ Critical Discrepancy & Expiration Logs")
+# --- ALERTS SECTION ---
 empty_meds = []
 low_meds = []
 expiring_meds = []
-dates_list = []
 
 for med in rig_meds:
-    try:
-        exp_date = datetime.datetime.strptime(med["expiry"], "%Y-%m-%d").date()
-        dates_list.append(exp_date)
-    except:
-        continue
-        
     if med["count"] == 0:
         empty_meds.append(med["name"])
     elif med["count"] == 1:
         low_meds.append(med["name"])
         
+    exp_date = datetime.datetime.strptime(med["expiry"], "%Y-%m-%d").date()
     if exp_date <= fifteen_days_out:
-        expiring_meds.append(f"{med['name']} (Exp: {med['expiry']})")
+        expiring_meds.append(f"{med['name']} ({med['expiry']})")
 
-earliest_expiry = min(dates_list) if dates_list else "None"
+if empty_meds:
+    st.error(f"🚨 **OUT OF STOCK:** {', '.join(empty_meds)}")
+if low_meds:
+    st.warning(f"⚠️ **LOW STOCK (1 Left):** {', '.join(low_meds)}")
+if expiring_meds:
+    st.info(f"⏳ **EXPIRING SOON:** {', '.join(expiring_meds)}")
+
+st.divider()
+
+# --- MATRIX SELECTION LAYER ---
+st.subheader(f"📊 Medication Controls - {selected_rig}")
+for m in rig_meds:
+    is_narc = m["name"] in NARCOTICS
+    if is_narc and user_role == "EMT / Basic":
+        continue
+        
+    with st.expander(f"{'🔒 ' if is_narc else '💊 '} {m['name']} — Total: {m['count']} | Expiry: {m['expiry']}"):
+        c1, c2 = st.columns(2)
+        with c1:
+            qty_used = st.number_input("Log Quantity Consumed", min_value=0, max_value=m['count'], step=1, key=f"use_{selected_rig}_{m['id']}")
+            initials = st.text_input("Paramedic/EMT Initials", max_chars=4, key=f"init_{selected_rig}_{m['id']}")
+            if st.button("Submit Usage Details", key=f"btn_use_{selected_rig}_{m['id']}"):
+                if qty_used > 0 and initials:
+                    m["count"] -= qty_used
+                    st.success("Usage updated!")
+                    st.rerun()
+        with c2:
+            qty_add = st.number_input("Log Quantity Restocked", min_value=0, step=1, key=f"add_{selected_rig}_{m['id']}")
+            if st.button("Confirm Restock", key=f"btn_add_{selected_rig}_{m['id']}"):
+                if qty_add > 0:
+                    m["count"] += qty_add
+                    st.success("Restock inventory updated!")
+                    st.rerun()
