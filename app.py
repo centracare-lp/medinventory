@@ -1,5 +1,7 @@
 import streamlit as st
 import datetime
+import json
+from github import Github
 
 # --- 1. THE COMPLETE REPOSITORY MEDICATION DATASET ---
 INITIAL_DATA = {
@@ -95,19 +97,57 @@ INITIAL_DATA = {
 
 NARCOTICS = ["Diazepam (Valium)", "Dilaudid", "Fentanyl", "Ketamine", "Midazolam", "Propofol"]
 
-# --- 2. LAYOUT INITIALIZATION ---
+# --- 2. GITHUB HARD DATA PERSISTENCE LINK ---
+def load_synchronized_data():
+    if "med_data" in st.session_state:
+        return st.session_state["med_data"]
+        
+    # Check if configurations are filled out in the streamcloud secrets vault
+    if "GITHUB_TOKEN" in st.secrets and "GITHUB_REPO" in st.secrets:
+        try:
+            g = Github(st.secrets["GITHUB_TOKEN"])
+            repo = g.get_repo(st.secrets["GITHUB_REPO"])
+            file_path = st.secrets.get("GITHUB_FILE_PATH", "med_data.json")
+            
+            file_contents = repo.get_contents(file_path)
+            synced_data = json.loads(file_contents.decoded_content.decode())
+            st.session_state["med_data"] = synced_data
+            return synced_data
+        except Exception:
+            # Fallback seamlessly to local session states if file doesn't exist yet
+            pass
+
+    st.session_state["med_data"] = json.loads(json.dumps(INITIAL_DATA))
+    return st.session_state["med_data"]
+
+def save_synchronized_data(updated_data):
+    st.session_state["med_data"] = updated_data
+    if "GITHUB_TOKEN" in st.secrets and "GITHUB_REPO" in st.secrets:
+        try:
+            g = Github(st.secrets["GITHUB_TOKEN"])
+            repo = g.get_repo(st.secrets["GITHUB_REPO"])
+            file_path = st.secrets.get("GITHUB_FILE_PATH", "med_data.json")
+            
+            try:
+                file_contents = repo.get_contents(file_path)
+                repo.update_file(file_path, "EMS Database Sync: Check update", json.dumps(updated_data, indent=4), file_contents.sha)
+            except Exception:
+                repo.create_file(file_path, "EMS Database Sync: Initialize Data File", json.dumps(updated_data, indent=4))
+            st.sidebar.success("💾 Automatically synced to GitHub!")
+            return
+        except Exception as e:
+            st.sidebar.error(f"Sync Issue: {str(e)}")
+    st.sidebar.warning("⚠️ Saved to browser memory only (Check Streamlit Secrets).")
+
+# --- 3. LAYOUT INITIALIZATION ---
 st.set_page_config(page_title="Ambulance Med Check", layout="wide")
 st.title("🚑 Ambulance Med Check Dashboard")
 
-# Safeguard runtime cache initialization
-if "med_data" not in st.session_state:
-    st.session_state["med_data"] = INITIAL_DATA
+current_inventory = load_synchronized_data()
 
-current_inventory = st.session_state["med_data"]
-
-# --- 3. CONTROLS INTERFACE ---
+# --- 4. CONTROLS INTERFACE ---
 st.sidebar.header("🛡️ Operations Hub")
-user_role = st.sidebar.selectbox("Select Certification Level", ["EMT / Basic", "Paramedic"])
+user_role = st.sidebar.selectbox("Select Your Certification Level", ["EMT / Basic", "Paramedic"])
 selected_rig = st.sidebar.radio("Active Ambulance Unit", ["Rig #356", "Rig #357"])
 
 # Expiration Boundaries Setup
@@ -126,56 +166,3 @@ all_expiration_dates = []
 for med in rig_meds:
     try:
         exp_date = datetime.datetime.strptime(med["expiry"], "%Y-%m-%d").date()
-        all_expiration_dates.append(exp_date)
-    except ValueError:
-        continue
-        
-    if med["count"] == 0:
-        empty_meds.append(med["name"])
-    elif med["count"] == 1:
-        low_meds.append(med["name"])
-        
-    if exp_date <= fifteen_days_out:
-        expiring_meds.append(f"{med['name']} ({med['expiry']})")
-
-earliest_expiry_date = min(all_expiration_dates) if all_expiration_dates else "N/A"
-
-col1, col2, col3, col4 = st.columns(4)
-col1.metric("Earliest System Expiration", str(earliest_expiry_date))
-col2.error(f"🚨 Out of Stock ({len(empty_meds)})")
-col3.warning(f"⚠️ Low Inventory ({len(low_meds)})")
-col4.info(f"⏳ Expiring Soon ({len(expiring_meds)})")
-
-if empty_meds:
-    st.error(f"**CRITICAL - EMPTY:** {', '.join(empty_meds)}")
-if low_meds:
-    st.warning(f"**NOTICE - LOW STOCK (1 Left):** {', '.join(low_meds)}")
-if expiring_meds:
-    st.info(f"**NOTICE - EXPIRING < 15 DAYS:** {', '.join(expiring_meds)}")
-
-st.divider()
-
-# --- SECTION 2: LIVE MANAGEMENT MATRIX ---
-st.subheader(f"📊 Active Operations Matrix — {selected_rig}")
-
-for m in rig_meds:
-    is_narc = m["name"] in NARCOTICS
-    if is_narc and user_role == "EMT / Basic":
-        continue  # Narcotic protection wall
-        
-    # Generate contextual color tags based on item status
-    status_indicator = "🟢 OK"
-    if m["count"] == 0:
-        status_indicator = "🔴 EMPTY"
-    elif m["count"] == 1:
-        status_indicator = "🟡 LOW"
-
-    expander_title = f"{status_indicator} | {m['name']} — Available: {m['count']} | Expiry: {m['expiry']}"
-    if is_narc:
-        expander_title = f"🔒 {expander_title} (Paramedic Only)"
-
-    with st.expander(expander_title):
-        c1, c2 = st.columns(2)
-        
-        with c1:
-            st.markdown("**Track Medication Consumption**")
