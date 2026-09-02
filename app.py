@@ -98,44 +98,58 @@ INITIAL_DATA = {
     ]
 }
 
-# --- 2. DATA PERSISTENCE LAYER (GITHUB API) ---
+# --- 2. DATA PERSISTENCE LAYER (GITHUB API - ROBUST VERSION) ---
 def load_data():
-    if "med_data" in st.session_state:
+    # If already stored in the user's active session, reuse it instantly
+    if "med_data" in st.session_state and st.session_state["med_data"]:
         return st.session_state["med_data"]
     
+    # Attempt live GitHub integration
     try:
-        token = st.secrets["GITHUB_TOKEN"]
-        repo_name = st.secrets["GITHUB_REPO"]
-        file_path = st.secrets["GITHUB_FILE_PATH"]
-        
-        g = Github(token)
-        repo = g.get_repo(repo_name)
-        file_contents = repo.get_contents(file_path)
-        data = json.loads(file_contents.decoded_content.decode())
-        st.session_state["med_data"] = data
-        return data
-    except Exception:
-        # Fallback to local session token / predefined structure if github setup isn't live yet
-        st.session_state["med_data"] = INITIAL_DATA
-        return INITIAL_DATA
+        # Check if secrets exist before pulling them
+        if "GITHUB_TOKEN" in st.secrets and "GITHUB_REPO" in st.secrets:
+            token = st.secrets["GITHUB_TOKEN"]
+            repo_name = st.secrets["GITHUB_REPO"]
+            file_path = st.secrets.get("GITHUB_FILE_PATH", "med_data.json")
+            
+            g = Github(token)
+            repo = g.get_repo(repo_name)
+            
+            try:
+                file_contents = repo.get_contents(file_path)
+                data = json.loads(file_contents.decoded_content.decode())
+                st.session_state["med_data"] = data
+                return data
+            except Exception as github_file_err:
+                # If the token works but the file doesn't exist yet, seed it!
+                repo.create_file(file_path, "EMS App: Initialize Inventory", json.dumps(INITIAL_DATA, indent=4))
+                st.session_state["med_data"] = INITIAL_DATA
+                return INITIAL_DATA
+    except Exception as credential_err:
+        # Show a small hint message in the sidebar so you know it's in fallback mode
+        st.sidebar.info("💡 Running in local preview mode (No live GitHub sync configured yet).")
+    
+    # CRITICAL FIX: If anything fails above, forcefully load INITIAL_DATA so the screen is never blank!
+    st.session_state["med_data"] = json.loads(json.dumps(INITIAL_DATA))
+    return st.session_state["med_data"]
 
 def save_data(data):
     st.session_state["med_data"] = data
     try:
-        token = st.secrets["GITHUB_TOKEN"]
-        repo_name = st.secrets["GITHUB_REPO"]
-        file_path = st.secrets["GITHUB_FILE_PATH"]
-        
-        g = Github(token)
-        repo = g.get_repo(repo_name)
-        try:
+        if "GITHUB_TOKEN" in st.secrets:
+            token = st.secrets["GITHUB_TOKEN"]
+            repo_name = st.secrets["GITHUB_REPO"]
+            file_path = st.secrets.get("GITHUB_FILE_PATH", "med_data.json")
+            
+            g = Github(token)
+            repo = g.get_repo(repo_name)
             file_contents = repo.get_contents(file_path)
             repo.update_file(file_path, "EMS App: Inventory update", json.dumps(data, indent=4), file_contents.sha)
-        except Exception:
-            repo.create_file(file_path, "EMS App: Initialize Inventory", json.dumps(data, indent=4))
-        st.success("Successfully synchronized inventory changes to GitHub Repository!")
+            st.success("✅ Changes synchronized to GitHub live file successfully!")
+            return
     except Exception as e:
-        st.warning("Saved locally to your browser session. Complete Secrets Configuration to sync live database to GitHub.")
+        pass
+    st.toast("💾 Saved changes locally to browser memory!", icon="💾")
 
 # --- 3. CORE USER INTERFACE ---
 st.set_page_config(page_title="Ambulance Med Check", layout="wide")
