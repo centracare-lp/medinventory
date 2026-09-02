@@ -17,7 +17,7 @@ st.markdown("""
     div[data-testid="stMetricLabel"] { font-size: 11px !important; }
     .stButton>button { width: 100% !important; padding: 0.4rem !important; font-size: 13px !important; height: 34px !important; }
     hr { margin: 6px 0px !important; }
-    div.stForm { padding: 8px !important; }
+    div.stForm { padding: 10px !important; border-radius: 6px !important; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -172,42 +172,31 @@ st.text_area(label="Tap box below, select all, and copy to text:", value=text_re
 
 st.markdown("---")
 
-# 8. Mobile Filter Search Strip
+# 8. Secure Restock Action Form Drawer
+st.subheader("⚙️ Quick Transaction Entry Windows")
+
+with st.expander("📦 Open Secure Inventory Restock Window", expanded=False):
+    st.info(f"Adding stock items to vehicle container target path: **{selected_rig}**")
+    all_med_names = sorted([m["name"] for m in current_inventory])
+    
+    with st.form("secure_restock_form", clear_on_submit=True):
+        restock_med_name = st.selectbox("Select Medication to Refill", options=all_med_names)
+        qty_to_add = st.number_input("Refill Quantity Count", min_value=1, value=1, step=1)
+        updated_expiry_date = st.date_input("Update Expiration Target Date", value=datetime.today())
+        
+        if st.form_submit_button("Commit and Save Restock Actions", type="primary"):
+            for med in current_inventory:
+                if med["name"] == restock_med_name:
+                    med["count"] = int(med["count"]) + qty_to_add
+                    med["expiry"] = str(updated_expiry_date)
+                    break
+                    
+            save_data_to_disk(st.session_state.rig_inventories)
+            st.success(f"Successfully processed restock update: Added +{qty_to_add} to {restock_med_name}!")
+            st.rerun()
+
+st.markdown("---")
+
+# 9. Mobile Filter Search Strip
 search_query = st.text_input("🔍 Quick Filter Med List...", placeholder="Type name...").strip()
 
-# 9. Dynamic Med Row Layout Cards (Flattened to remove layout alignment crashes)
-st.subheader(f"Inventory: {selected_rig}")
-
-for i, med in enumerate(current_inventory):
-    if search_query.lower() in med["name"].lower():
-        c_count = int(med["count"])
-        
-        is_expiring = False
-        try:
-            m_exp = datetime.strptime(med["expiry"].strip(), "%Y-%m-%d")
-            if m_exp <= expiry_threshold_15d and c_count > 0:
-                is_expiring = True
-        except ValueError:
-            pass
-
-        # Build clean string labels
-        status_label = ""
-        if c_count == 0:
-            status_label = " 🛑 (EMPTY)"
-        elif is_expiring:
-            status_label = " ⏳ (EXPIRING)"
-        elif c_count == 1:
-            status_label = " ⚠️ (LOW)"
-
-        # Render rows using a direct layout split
-        row_col1, row_col2 = st.columns([3, 1])
-        
-        with row_col1:
-            st.markdown(f"**{med['name']}**{status_label}")
-            st.markdown(f"Stock: `{c_count}` | Exp: `{med['expiry']}`")
-            
-        with row_col2:
-            if st.button("Use 1", key=f"use_{selected_rig}_{med['id']}_{i}", disabled=(c_count == 0)):
-                med["count"] = c_count - 1
-                save_data_to_disk(st.session_state.rig_inventories)
-                st.rerun()
