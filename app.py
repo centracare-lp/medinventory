@@ -166,3 +166,16 @@ all_expiration_dates = []
 for med in rig_meds:
     try:
         exp_date = datetime.datetime.strptime(med["expiry"], "%Y-%m-%d").date()
+        all_expiration_dates.append(exp_date)
+    except ValueError:
+        continue # Safely skip if a date string is broken or corrupt
+        
+    if med["count"] == 0:
+        empty_meds.append(med["name"])
+    elif med["count"] == 1:
+        low_meds.append(med["name"])
+        
+    if exp_date <= fifteen_days_out:
+        expiring_meds.append(f"{med['name']} ({med['expiry']})")
+
+earliest_expiry_date = min(all_expiration_dates) if all_expiration_dates else "N/A"
