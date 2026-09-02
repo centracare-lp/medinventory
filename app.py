@@ -126,7 +126,7 @@ def load_synchronized_data():
                 st.session_state["med_data"] = json.loads(content_bytes.decode())
                 st.session_state["github_sha"] = res_data["sha"]
         except Exception:
-            pass # Gracefully run from inline template if repo link stalls
+            pass # Keep using memory template if repo link stalls
             
     st.session_state["data_synced_once"] = True
     return st.session_state["med_data"]
@@ -140,13 +140,14 @@ def save_synchronized_data(updated_data):
             f_path = st.secrets.get("GITHUB_FILE_PATH", "med_data.json")
             url = f"https://github.com{repo}/contents/{f_path}"
             
+            # Fetch current hash signature safely
             if "github_sha" not in st.session_state:
                 try:
                     req_get = urllib.request.Request(url)
                     req_get.add_header("Authorization", f"token {token}")
                     with urllib.request.urlopen(req_get, timeout=3) as r:
                         st.session_state["github_sha"] = json.loads(r.read().decode())["sha"]
-                except:
+                except Exception:
                     st.session_state["github_sha"] = ""
 
             json_bytes = json.dumps(updated_data, indent=4).encode('utf-8')
@@ -159,4 +160,3 @@ def save_synchronized_data(updated_data):
             if st.session_state.get("github_sha"):
                 payload["sha"] = st.session_state["github_sha"]
                 
-            req_put = urllib.request.Request(url, method="PUT", data=json.dumps(payload).encode('utf-8'))
