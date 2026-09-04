@@ -585,4 +585,3 @@ st.subheader("📋 Shift Summary Text Exporter")
 st.info(
     "Shift Summary functionality will be added in the next development step."
 )
-```
