@@ -1,116 +1,376 @@
+```python
 import streamlit as st
 import datetime
 import json
+import copy
 
-# --- 1. THE COMPLETE AMBULANCE INVENTORY MANIFEST ---
-INITIAL_DATA = {
-    "Rig #356": [
-        {"name": "Adenosine", "count": 5, "expiry": "2027-05-12"},
-        {"name": "Albuterol", "count": 2, "expiry": "2026-10-01"},
-        {"name": "Amiodarone", "count": 3, "expiry": "2028-01-15"},
-        {"name": "Aspirin", "count": 2, "expiry": "2026-12-31"},
-        {"name": "Atropine", "count": 2, "expiry": "2027-05-12"},
-        {"name": "Benadryl (IV)", "count": 1, "expiry": "2026-10-01"},
-        {"name": "Benadryl (Oral)", "count": 2, "expiry": "2028-01-15"},
-        {"name": "Calcium Chloride", "count": 3, "expiry": "2026-12-31"},
-        {"name": "Calcium Gluconate", "count": 0, "expiry": "2027-05-12"},
-        {"name": "Cardizem", "count": 1, "expiry": "2026-10-01"},
-        {"name": "Dextrose (Oral)", "count": 2, "expiry": "2028-01-15"},
-        {"name": "Dextrose (D10)", "count": 1, "expiry": "2026-12-31"},
-        {"name": "Dextrose (D50)", "count": 1, "expiry": "2027-05-12"},
-        {"name": "Diazepam (Valium)", "count": 2, "expiry": "2026-10-01"},
-        {"name": "Dilaudid", "count": 1, "expiry": "2028-01-15"},
-        {"name": "Droperidol", "count": 2, "expiry": "2026-12-31"},
-        {"name": "DuoNeb", "count": 4, "expiry": "2027-05-12"},
-        {"name": "Epi (IV) 1:10,000", "count": 2, "expiry": "2026-10-01"},
-        {"name": "Epi (IM) 1:1,000", "count": 2, "expiry": "2028-01-15"},
-        {"name": "Etomidate", "count": 8, "expiry": "2026-12-31"},
-        {"name": "Fentanyl", "count": 4, "expiry": "2027-05-12"},
-        {"name": "Glucagon", "count": 2, "expiry": "2026-10-01"},
-        {"name": "Haldol", "count": 4, "expiry": "2028-01-15"},
-        {"name": "Ketamine", "count": 2, "expiry": "2026-12-31"},
-        {"name": "Labetalol", "count": 2, "expiry": "2027-05-12"},
-        {"name": "Lidocaine", "count": 3, "expiry": "2026-10-01"},
-        {"name": "Mag Sulfate", "count": 2, "expiry": "2028-01-15"},
-        {"name": "Metoprolol", "count": 2, "expiry": "2026-12-31"},
-        {"id": "29", "name": "Midazolam", "count": 2, "expiry": "2028-01-15"},
-        {"name": "Narcan", "count": 2, "expiry": "2026-12-31"},
-        {"name": "Nitro (Tabs)", "count": 2, "expiry": "2027-05-12"},
-        {"name": "Nitro (IV)", "count": 2, "expiry": "2026-10-01"},
-        {"name": "Propofol", "count": 1, "expiry": "2028-01-15"},
-        {"name": "Racemic Epi", "count": 1, "expiry": "2026-12-31"},
-        {"name": "Rocuronium", "count": 1, "expiry": "2027-05-12"},
-        {"name": "Sodium Bicarbonate", "count": 2, "expiry": "2026-10-01"},
-        {"name": "Succinylcholine", "count": 2, "expiry": "2028-01-15"},
-        {"name": "Terbutaline", "count": 4, "expiry": "2026-12-31"},
-        {"name": "Toradol", "count": 0, "expiry": "2027-05-12"},
-        {"name": "Tetracaine (eye drop)", "count": 2, "expiry": "2026-10-01"},
-        {"name": "Vecuronium", "count": 2, "expiry": "2028-01-15"},
-        {"name": "Zofran", "count": 1, "expiry": "2026-12-31"}
-    ],
-    "Rig #357": [
-        {"name": "Adenosine", "count": 5, "expiry": "2027-05-12"},
-        {"name": "Albuterol", "count": 2, "expiry": "2026-10-01"},
-        {"name": "Amiodarone", "count": 3, "expiry": "2028-01-15"},
-        {"name": "Aspirin", "count": 2, "expiry": "2026-12-31"},
-        {"name": "Atropine", "count": 2, "expiry": "2027-05-12"},
-        {"name": "Benadryl (IV)", "count": 1, "expiry": "2026-10-01"},
-        {"name": "Benadryl (Oral)", "count": 2, "expiry": "2028-01-15"},
-        {"name": "Calcium Chloride", "count": 3, "expiry": "2026-12-31"},
-        {"name": "Calcium Gluconate", "count": 0, "expiry": "2027-05-12"},
-        {"name": "Cardizem", "count": 1, "expiry": "2026-10-01"},
-        {"name": "Dextrose (Oral)", "count": 2, "expiry": "2028-01-15"},
-        {"name": "Dextrose (D10)", "count": 1, "expiry": "2026-12-31"},
-        {"name": "Dextrose (D50)", "count": 1, "expiry": "2027-05-12"},
-        {"name": "Diazepam (Valium)", "count": 2, "expiry": "2026-10-01"},
-        {"name": "Dilaudid", "count": 1, "expiry": "2028-01-15"},
-        {"name": "Droperidol", "count": 2, "expiry": "2026-12-31"},
-        {"name": "DuoNeb", "count": 4, "expiry": "2027-05-12"},
-        {"name": "Epi (IV) 1:10,000", "count": 2, "expiry": "2026-10-01"},
-        {"name": "Epi (IM) 1:1,000", "count": 2, "expiry": "2028-01-15"},
-        {"name": "Etomidate", "count": 8, "expiry": "2026-12-31"},
-        {"name": "Fentanyl", "count": 4, "expiry": "2027-05-12"},
-        {"name": "Glucagon", "count": 2, "expiry": "2026-10-01"},
-        {"name": "Haldol", "count": 4, "expiry": "2028-01-15"},
-        {"name": "Ketamine", "count": 2, "expiry": "2026-12-31"},
-        {"name": "Labetalol", "count": 2, "expiry": "2027-05-12"},
-        {"name": "Lidocaine", "count": 3, "expiry": "2026-10-01"},
-        {"name": "Mag Sulfate", "count": 2, "expiry": "2028-01-15"},
-        {"name": "Metoprolol", "count": 2, "expiry": "2026-12-31"},
-        {"name": "Midazolam", "count": 2, "expiry": "2028-01-15"},
-        {"name": "Narcan", "count": 2, "expiry": "2026-12-31"},
-        {"name": "Nitro (Tabs)", "count": 2, "expiry": "2027-05-12"},
-        {"name": "Nitro (IV)", "count": 2, "expiry": "2026-10-01"},
-        {"name": "Propofol", "count": 1, "expiry": "2028-01-15"},
-        {"name": "Racemic Epi", "count": 1, "expiry": "2026-12-31"},
-        {"name": "Rocuronium", "count": 1, "expiry": "2027-05-12"},
-        {"name": "Sodium Bicarbonate", "count": 2, "expiry": "2026-10-01"},
-        {"name": "Succinylcholine", "count": 2, "expiry": "2028-01-15"},
-        {"name": "Terbutaline", "count": 4, "expiry": "2026-12-31"},
-        {"name": "Toradol", "count": 0, "expiry": "2027-05-12"},
-        {"name": "Tetracaine (eye drop)", "count": 2, "expiry": "2026-10-01"},
-        {"name": "Vecuronium", "count": 2, "expiry": "2028-01-15"},
-        {"name": "Zofran", "count": 1, "expiry": "2026-12-31"}
-    ]
+
+# ============================================================
+# 1. MASTER MEDICATION DEFINITIONS
+# ============================================================
+#
+# This is the master list of medications carried by the service.
+# Each medication is defined ONLY ONCE.
+#
+# "controlled" identifies medications that should be restricted
+# from the EMT/Basic view.
+#
+# The inventory quantities and expiration dates are stored
+# separately for each ambulance below.
+# ============================================================
+
+MEDICATIONS = {
+    "adenosine": {
+        "name": "Adenosine",
+        "controlled": False,
+    },
+    "albuterol": {
+        "name": "Albuterol",
+        "controlled": False,
+    },
+    "amiodarone": {
+        "name": "Amiodarone",
+        "controlled": False,
+    },
+    "aspirin": {
+        "name": "Aspirin",
+        "controlled": False,
+    },
+    "atropine": {
+        "name": "Atropine",
+        "controlled": False,
+    },
+    "benadryl_iv": {
+        "name": "Benadryl (IV)",
+        "controlled": False,
+    },
+    "benadryl_oral": {
+        "name": "Benadryl (Oral)",
+        "controlled": False,
+    },
+    "calcium_chloride": {
+        "name": "Calcium Chloride",
+        "controlled": False,
+    },
+    "calcium_gluconate": {
+        "name": "Calcium Gluconate",
+        "controlled": False,
+    },
+    "cardizem": {
+        "name": "Cardizem",
+        "controlled": False,
+    },
+    "dextrose_oral": {
+        "name": "Dextrose (Oral)",
+        "controlled": False,
+    },
+    "dextrose_d10": {
+        "name": "Dextrose (D10)",
+        "controlled": False,
+    },
+    "dextrose_d50": {
+        "name": "Dextrose (D50)",
+        "controlled": False,
+    },
+    "diazepam": {
+        "name": "Diazepam (Valium)",
+        "controlled": True,
+    },
+    "dilaudid": {
+        "name": "Dilaudid",
+        "controlled": True,
+    },
+    "droperidol": {
+        "name": "Droperidol",
+        "controlled": False,
+    },
+    "duoneb": {
+        "name": "DuoNeb",
+        "controlled": False,
+    },
+    "epi_iv": {
+        "name": "Epi (IV) 1:10,000",
+        "controlled": False,
+    },
+    "epi_im": {
+        "name": "Epi (IM) 1:1,000",
+        "controlled": False,
+    },
+    "etomidate": {
+        "name": "Etomidate",
+        "controlled": False,
+    },
+    "fentanyl": {
+        "name": "Fentanyl",
+        "controlled": True,
+    },
+    "glucagon": {
+        "name": "Glucagon",
+        "controlled": False,
+    },
+    "haldol": {
+        "name": "Haldol",
+        "controlled": False,
+    },
+    "ketamine": {
+        "name": "Ketamine",
+        "controlled": True,
+    },
+    "labetalol": {
+        "name": "Labetalol",
+        "controlled": False,
+    },
+    "lidocaine": {
+        "name": "Lidocaine",
+        "controlled": False,
+    },
+    "mag_sulfate": {
+        "name": "Mag Sulfate",
+        "controlled": False,
+    },
+    "metoprolol": {
+        "name": "Metoprolol",
+        "controlled": False,
+    },
+    "midazolam": {
+        "name": "Midazolam",
+        "controlled": True,
+    },
+    "narcan": {
+        "name": "Narcan",
+        "controlled": False,
+    },
+    "nitro_tabs": {
+        "name": "Nitro (Tabs)",
+        "controlled": False,
+    },
+    "nitro_iv": {
+        "name": "Nitro (IV)",
+        "controlled": False,
+    },
+    "propofol": {
+        "name": "Propofol",
+        "controlled": True,
+    },
+    "racemic_epi": {
+        "name": "Racemic Epi",
+        "controlled": False,
+    },
+    "rocuronium": {
+        "name": "Rocuronium",
+        "controlled": False,
+    },
+    "sodium_bicarbonate": {
+        "name": "Sodium Bicarbonate",
+        "controlled": False,
+    },
+    "succinylcholine": {
+        "name": "Succinylcholine",
+        "controlled": False,
+    },
+    "terbutaline": {
+        "name": "Terbutaline",
+        "controlled": False,
+    },
+    "toradol": {
+        "name": "Toradol",
+        "controlled": False,
+    },
+    "tetracaine": {
+        "name": "Tetracaine (eye drop)",
+        "controlled": False,
+    },
+    "vecuronium": {
+        "name": "Vecuronium",
+        "controlled": False,
+    },
+    "zofran": {
+        "name": "Zofran",
+        "controlled": False,
+    },
 }
 
-NARCOTICS = ["Diazepam (Valium)", "Dilaudid", "Fentanyl", "Ketamine", "Midazolam", "Propofol"]
 
-# Stable session initialization step
-if "med_data" not in st.session_state:
-    st.session_state["med_data"] = json.loads(json.dumps(INITIAL_DATA))
+# ============================================================
+# 2. INITIAL INVENTORY
+# ============================================================
+#
+# The medication definitions above are shared by all rigs.
+# Only the inventory-specific information lives here:
+#
+#     count
+#     expiry
+#
+# This means adding a new rig does NOT require duplicating the
+# entire medication manifest.
+# ============================================================
 
-# --- 2. USER INTERFACE GENERATION ---
+INITIAL_INVENTORY = {
+    "Rig #356": {
+        "adenosine": {"count": 5, "expiry": "2027-05-12"},
+        "albuterol": {"count": 2, "expiry": "2026-10-01"},
+        "amiodarone": {"count": 3, "expiry": "2028-01-15"},
+        "aspirin": {"count": 2, "expiry": "2026-12-31"},
+        "atropine": {"count": 2, "expiry": "2027-05-12"},
+        "benadryl_iv": {"count": 1, "expiry": "2026-10-01"},
+        "benadryl_oral": {"count": 2, "expiry": "2028-01-15"},
+        "calcium_chloride": {"count": 3, "expiry": "2026-12-31"},
+        "calcium_gluconate": {"count": 0, "expiry": "2027-05-12"},
+        "cardizem": {"count": 1, "expiry": "2026-10-01"},
+        "dextrose_oral": {"count": 2, "expiry": "2028-01-15"},
+        "dextrose_d10": {"count": 1, "expiry": "2026-12-31"},
+        "dextrose_d50": {"count": 1, "expiry": "2027-05-12"},
+        "diazepam": {"count": 2, "expiry": "2026-10-01"},
+        "dilaudid": {"count": 1, "expiry": "2028-01-15"},
+        "droperidol": {"count": 2, "expiry": "2026-12-31"},
+        "duoneb": {"count": 4, "expiry": "2027-05-12"},
+        "epi_iv": {"count": 2, "expiry": "2026-10-01"},
+        "epi_im": {"count": 2, "expiry": "2028-01-15"},
+        "etomidate": {"count": 8, "expiry": "2026-12-31"},
+        "fentanyl": {"count": 4, "expiry": "2027-05-12"},
+        "glucagon": {"count": 2, "expiry": "2026-10-01"},
+        "haldol": {"count": 4, "expiry": "2028-01-15"},
+        "ketamine": {"count": 2, "expiry": "2026-12-31"},
+        "labetalol": {"count": 2, "expiry": "2027-05-12"},
+        "lidocaine": {"count": 3, "expiry": "2026-10-01"},
+        "mag_sulfate": {"count": 2, "expiry": "2028-01-15"},
+        "metoprolol": {"count": 2, "expiry": "2026-12-31"},
+        "midazolam": {"count": 2, "expiry": "2028-01-15"},
+        "narcan": {"count": 2, "expiry": "2026-12-31"},
+        "nitro_tabs": {"count": 2, "expiry": "2027-05-12"},
+        "nitro_iv": {"count": 2, "expiry": "2026-10-01"},
+        "propofol": {"count": 1, "expiry": "2028-01-15"},
+        "racemic_epi": {"count": 1, "expiry": "2026-12-31"},
+        "rocuronium": {"count": 1, "expiry": "2027-05-12"},
+        "sodium_bicarbonate": {"count": 2, "expiry": "2026-10-01"},
+        "succinylcholine": {"count": 2, "expiry": "2028-01-15"},
+        "terbutaline": {"count": 4, "expiry": "2026-12-31"},
+        "toradol": {"count": 0, "expiry": "2027-05-12"},
+        "tetracaine": {"count": 2, "expiry": "2026-10-01"},
+        "vecuronium": {"count": 2, "expiry": "2028-01-15"},
+        "zofran": {"count": 1, "expiry": "2026-12-31"},
+    },
+
+    "Rig #357": {
+        "adenosine": {"count": 5, "expiry": "2027-05-12"},
+        "albuterol": {"count": 2, "expiry": "2026-10-01"},
+        "amiodarone": {"count": 3, "expiry": "2028-01-15"},
+        "aspirin": {"count": 2, "expiry": "2026-12-31"},
+        "atropine": {"count": 2, "expiry": "2027-05-12"},
+        "benadryl_iv": {"count": 1, "expiry": "2026-10-01"},
+        "benadryl_oral": {"count": 2, "expiry": "2028-01-15"},
+        "calcium_chloride": {"count": 3, "expiry": "2026-12-31"},
+        "calcium_gluconate": {"count": 0, "expiry": "2027-05-12"},
+        "cardizem": {"count": 1, "expiry": "2026-10-01"},
+        "dextrose_oral": {"count": 2, "expiry": "2028-01-15"},
+        "dextrose_d10": {"count": 1, "expiry": "2026-12-31"},
+        "dextrose_d50": {"count": 1, "expiry": "2027-05-12"},
+        "diazepam": {"count": 2, "expiry": "2026-10-01"},
+        "dilaudid": {"count": 1, "expiry": "2028-01-15"},
+        "droperidol": {"count": 2, "expiry": "2026-12-31"},
+        "duoneb": {"count": 4, "expiry": "2027-05-12"},
+        "epi_iv": {"count": 2, "expiry": "2026-10-01"},
+        "epi_im": {"count": 2, "expiry": "2028-01-15"},
+        "etomidate": {"count": 8, "expiry": "2026-12-31"},
+        "fentanyl": {"count": 4, "expiry": "2027-05-12"},
+        "glucagon": {"count": 2, "expiry": "2026-10-01"},
+        "haldol": {"count": 4, "expiry": "2028-01-15"},
+        "ketamine": {"count": 2, "expiry": "2026-12-31"},
+        "labetalol": {"count": 2, "expiry": "2027-05-12"},
+        "lidocaine": {"count": 3, "expiry": "2026-10-01"},
+        "mag_sulfate": {"count": 2, "expiry": "2028-01-15"},
+        "metoprolol": {"count": 2, "expiry": "2026-12-31"},
+        "midazolam": {"count": 2, "expiry": "2028-01-15"},
+        "narcan": {"count": 2, "expiry": "2026-12-31"},
+        "nitro_tabs": {"count": 2, "expiry": "2027-05-12"},
+        "nitro_iv": {"count": 2, "expiry": "2026-10-01"},
+        "propofol": {"count": 1, "expiry": "2028-01-15"},
+        "racemic_epi": {"count": 1, "expiry": "2026-12-31"},
+        "rocuronium": {"count": 1, "expiry": "2027-05-12"},
+        "sodium_bicarbonate": {"count": 2, "expiry": "2026-10-01"},
+        "succinylcholine": {"count": 2, "expiry": "2028-01-15"},
+        "terbutaline": {"count": 4, "expiry": "2026-12-31"},
+        "toradol": {"count": 0, "expiry": "2027-05-12"},
+        "tetracaine": {"count": 2, "expiry": "2026-10-01"},
+        "vecuronium": {"count": 2, "expiry": "2028-01-15"},
+        "zofran": {"count": 1, "expiry": "2026-12-31"},
+    },
+}
+
+
+# ============================================================
+# 3. SESSION STATE INITIALIZATION
+# ============================================================
+
+if "inventory" not in st.session_state:
+    st.session_state["inventory"] = copy.deepcopy(INITIAL_INVENTORY)
+
+
+# ============================================================
+# 4. HELPER FUNCTION
+# ============================================================
+
+def build_visible_medication_list(rig, user_role):
+    """
+    Converts the structured inventory data into a flat list
+    suitable for Streamlit's data_editor.
+    """
+
+    visible = []
+
+    for med_id, med_info in MEDICATIONS.items():
+
+        # Make sure the medication exists in the selected rig.
+        if med_id not in st.session_state["inventory"][rig]:
+            continue
+
+        # Hide controlled medications from EMT/Basic users.
+        if med_info["controlled"] and user_role == "EMT / Basic":
+            continue
+
+        inventory_item = st.session_state["inventory"][rig][med_id]
+
+        visible.append({
+            "id": med_id,
+            "name": med_info["name"],
+            "count": inventory_item["count"],
+            "expiry": inventory_item["expiry"],
+        })
+
+    return visible
+
+
+# ============================================================
+# 5. USER INTERFACE
+# ============================================================
+
 st.title("🚑 Ambulance Med Check Dashboard")
 
 st.sidebar.header("🛡️ Operations Hub")
-user_role = st.sidebar.selectbox("Select Your Certification Level", ["EMT / Basic", "Paramedic"])
-selected_rig = st.sidebar.radio("Active Ambulance Unit", ["Rig #356", "Rig #357"])
 
-# Sidebar Data Export JSON Utility
+user_role = st.sidebar.selectbox(
+    "Select Your Certification Level",
+    ["EMT / Basic", "Paramedic"]
+)
+
+selected_rig = st.sidebar.radio(
+    "Active Ambulance Unit",
+    ["Rig #356", "Rig #357"]
+)
+
+
+# ============================================================
+# 6. BACKUP UTILITY
+# ============================================================
+
 st.sidebar.markdown("---")
 st.sidebar.subheader("💾 Backup Utility")
-json_string = json.dumps(st.session_state["med_data"], indent=4)
+
+json_string = json.dumps(
+    st.session_state["inventory"],
+    indent=4
+)
+
 st.sidebar.download_button(
     label="⬇️ Download Backup Database",
     data=json_string,
@@ -118,88 +378,212 @@ st.sidebar.download_button(
     mime="application/json"
 )
 
+
+# ============================================================
+# 7. DATE CALCULATIONS
+# ============================================================
+
 today = datetime.date.today()
+
 fifteen_days_out = today + datetime.timedelta(days=15)
 
-# --- FILTER PRIVILEGES & COMPUTE ALERTS ---
-raw_meds = st.session_state["med_data"][selected_rig]
-visible_meds = []
+
+# ============================================================
+# 8. BUILD CURRENT VIEW
+# ============================================================
+
+raw_inventory = st.session_state["inventory"][selected_rig]
+
+visible_meds = build_visible_medication_list(
+    selected_rig,
+    user_role
+)
+
+
+# ============================================================
+# 9. COMPUTE ALERTS
+# ============================================================
 
 empty_meds = []
 low_meds = []
 expiring_meds = []
 all_expiration_dates = []
 
-for med in raw_meds:
-    is_narc = med["name"] in NARCOTICS
-    if is_narc and user_role == "EMT / Basic":
-        continue  # Narcotic wall filter
-        
-    visible_meds.append(med)
-    
+
+for med in visible_meds:
+
     try:
-        exp_date = datetime.datetime.strptime(med["expiry"], "%Y-%m-%d").date()
+        exp_date = datetime.datetime.strptime(
+            med["expiry"],
+            "%Y-%m-%d"
+        ).date()
+
         all_expiration_dates.append(exp_date)
+
     except ValueError:
         continue
 
+    # Inventory alerts
     if med["count"] == 0:
         empty_meds.append(med["name"])
+
     elif med["count"] == 1:
         low_meds.append(med["name"])
-        
+
+    # Expiration alert
     if exp_date <= fifteen_days_out:
-        expiring_meds.append("%s (%s)" % (med['name'], med['expiry']))
+        expiring_meds.append(
+            "%s (%s)" % (
+                med["name"],
+                med["expiry"]
+            )
+        )
 
-earliest_expiry_date = min(all_expiration_dates) if all_expiration_dates else "N/A"
 
-# --- SECTION 1: METRICS & ALERTS ---
+if all_expiration_dates:
+    earliest_expiry_date = min(all_expiration_dates)
+else:
+    earliest_expiry_date = "N/A"
+
+
+# ============================================================
+# 10. METRICS & ALERTS
+# ============================================================
+
 st.subheader("⚠️ Critical Discrepancy & Expiration Logs")
+
 col1, col2, col3, col4 = st.columns(4)
-col1.metric("Earliest Expiration Date", str(earliest_expiry_date))
-col2.error("🚨 Out of Stock (%d)" % len(empty_meds))
-col3.warning("⚠️ Low Inventory (%d)" % len(low_meds))
-col4.info("⏳ Expiring Soon (%d)" % len(expiring_meds))
+
+col1.metric(
+    "Earliest Expiration Date",
+    str(earliest_expiry_date)
+)
+
+col2.error(
+    "🚨 Out of Stock (%d)" % len(empty_meds)
+)
+
+col3.warning(
+    "⚠️ Low Inventory (%d)" % len(low_meds)
+)
+
+col4.info(
+    "⏳ Expiring Soon (%d)" % len(expiring_meds)
+)
+
 
 if empty_meds:
-    st.error("**CRITICAL - EMPTY:** %s" % ', '.join(empty_meds))
+    st.error(
+        "**CRITICAL - EMPTY:** %s"
+        % ", ".join(empty_meds)
+    )
+
+
 if low_meds:
-    st.warning("**NOTICE - LOW STOCK (1 Left):** %s" % ', '.join(low_meds))
+    st.warning(
+        "**NOTICE - LOW STOCK (1 Left):** %s"
+        % ", ".join(low_meds)
+    )
+
+
 if expiring_meds:
-    st.info("**NOTICE - EXPIRING < 15 DAYS:** %s" % ', '.join(expiring_meds))
+    st.info(
+        "**NOTICE - EXPIRING < 15 DAYS:** %s"
+        % ", ".join(expiring_meds)
+    )
+
 
 st.divider()
 
-# --- SECTION 2: THE FLAT INTERACTIVE MATRIX GRID ---
-st.subheader("📊 Active Operations Grid — %s" % selected_rig)
-st.markdown("Adjust quantities and expiration dates directly inside the data grid below:")
 
-# Display the flat matrix grid using Streamlit's robust native data editor
+# ============================================================
+# 11. INTERACTIVE MEDICATION GRID
+# ============================================================
+
+st.subheader(
+    "📊 Active Operations Grid — %s"
+    % selected_rig
+)
+
+st.markdown(
+    "Adjust quantities and expiration dates directly "
+    "inside the data grid below:"
+)
+
+
 edited_data = st.data_editor(
     visible_meds,
+
     column_config={
-        "name": st.column_config.TextColumn("Medication Name", disabled=True),
-        "count": st.column_config.NumberColumn("Quantity on Hand", min_value=0, step=1, required=True),
-        "expiry": st.column_config.TextColumn("Expiration Date (YYYY-MM-DD)", required=True),
+        "id": st.column_config.TextColumn(
+            "Medication ID",
+            disabled=True
+        ),
+
+        "name": st.column_config.TextColumn(
+            "Medication Name",
+            disabled=True
+        ),
+
+        "count": st.column_config.NumberColumn(
+            "Quantity on Hand",
+            min_value=0,
+            step=1,
+            required=True
+        ),
+
+        "expiry": st.column_config.TextColumn(
+            "Expiration Date (YYYY-MM-DD)",
+            required=True
+        ),
     },
+
     hide_index=True,
     use_container_width=True,
     key="grid_editor"
 )
 
-# Process row mutations safely without dynamic key tracking drops
-if st.button("💾 Save Matrix Changes", type="primary"):
-    # Re-merge the updated visible records back into the master workspace state
+
+# ============================================================
+# 12. SAVE MATRIX CHANGES
+# ============================================================
+
+if st.button(
+    "💾 Save Matrix Changes",
+    type="primary"
+):
+
     for updated_item in edited_data:
-        for original_item in raw_meds:
-            if original_item["name"] == updated_item["name"]:
-                original_item["count"] = updated_item["count"]
-                original_item["expiry"] = updated_item["expiry"]
-    
-    st.success("✅ Changes committed to current session cache successfully!")
+
+        med_id = updated_item["id"]
+
+        if med_id in raw_inventory:
+
+            raw_inventory[med_id]["count"] = (
+                updated_item["count"]
+            )
+
+            raw_inventory[med_id]["expiry"] = (
+                updated_item["expiry"]
+            )
+
+    st.success(
+        "✅ Changes committed to current session cache successfully!"
+    )
+
     st.rerun()
+
 
 st.divider()
 
-# --- SECTION 3: SUMMARY EXPORTER BLOCK ---
+
+# ============================================================
+# 13. SHIFT SUMMARY
+# ============================================================
+
 st.subheader("📋 Shift Summary Text Exporter")
+
+st.info(
+    "Shift Summary functionality will be added in the next development step."
+)
+```
