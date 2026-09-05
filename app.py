@@ -2,6 +2,7 @@ import streamlit as st
 import datetime
 import json
 import copy
+import hashlib
 
 
 # ============================================================
@@ -17,6 +18,52 @@ import copy
 # The inventory quantities and expiration dates are stored
 # separately for each ambulance below.
 # ============================================================
+
+
+# ============================================================
+# USER MANAGEMENT & PERMISSIONS
+# ============================================================
+DEFAULT_USERS = [
+    {
+        "name": "Administrator",
+        "initials": "ADM",
+        "pin_hash": hashlib.sha256("1234".encode()).hexdigest(),
+        "permissions": [
+            "manage_users",
+            "manage_minmax",
+            "edit_inventory",
+            "record_usage",
+            "record_restock",
+        ],
+        "active": True,
+    }
+]
+
+PERMISSION_LABELS = {
+    "manage_users": "Manage users",
+    "manage_minmax": "Manage medication Min/Max",
+    "edit_inventory": "Edit inventory",
+    "record_usage": "Record medication usage",
+    "record_restock": "Record medication restock",
+}
+
+def hash_pin(pin):
+    return hashlib.sha256(str(pin).encode()).hexdigest()
+
+def current_user():
+    return st.session_state.get("current_user")
+
+def has_permission(permission):
+    user = current_user()
+    return bool(
+        user
+        and user.get("active", False)
+        and permission in user.get("permissions", [])
+    )
+
+st.session_state.setdefault("users", copy.deepcopy(DEFAULT_USERS))
+st.session_state.setdefault("current_user", None)
+st.session_state.setdefault("minmax_unlocked", False)
 
 MEDICATIONS = {
     "adenosine": {
@@ -358,6 +405,10 @@ def visible_med_ids(rig, user_role):
 
 
 def record_activity(rig, med_id, activity_type, quantity):
+
+    operator_initials = (
+        current_user()["initials"] if current_user() else "UNAUTH"
+    )
     """Record a usage/restock event for the active shift."""
     target = (
         st.session_state["shift_usage"]
@@ -370,6 +421,7 @@ def record_activity(rig, med_id, activity_type, quantity):
 
     st.session_state["activity_log"].append({
         "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "initials": operator_initials,
         "rig": rig,
         "med_id": med_id,
         "medication": MEDICATIONS[med_id]["name"],
@@ -463,6 +515,147 @@ def build_shift_summary(rig, user_role):
 # ============================================================
 
 st.title("🚑 Ambulance Med Check Dashboard")
+
+
+# ============================================================
+# USER ACCESS / USER MANAGEMENT
+# ============================================================
+with st.sidebar.expander("👤 User Access", expanded=True):
+    user = current_user()
+
+    if user:
+        st.success(f"Signed in: {user['name']} ({user['initials']})")
+        if st.button("🔒 Sign Out", key="sign_out"):
+            st.session_state.current_user = None
+            st.session_state.minmax_unlocked = False
+            st.rerun()
+    else:
+        login_initials = st.text_input(
+            "Initials", max_chars=5, key="login_initials"
+        ).strip().upper()
+        login_pin = st.text_input("PIN", type="password", key="login_pin")
+
+        if st.button("Sign In", key="sign_in"):
+            match = next(
+                (
+                    u for u in st.session_state.users
+                    if u["active"]
+                    and u["initials"].upper() == login_initials
+                    and u["pin_hash"] == hash_pin(login_pin)
+                ),
+                None,
+            )
+            if match:
+                st.session_state.current_user = copy.deepcopy(match)
+                st.session_state.minmax_unlocked = False
+                st.rerun()
+            else:
+                st.error("Invalid initials or PIN.")
+
+    if has_permission("manage_users"):
+        st.divider()
+        st.subheader("User Management")
+
+        with st.form("add_user_form", clear_on_submit=True):
+            new_name = st.text_input("Name")
+            new_initials = st.text_input(
+                "Initials", max_chars=5
+            ).strip().upper()
+            new_pin = st.text_input("PIN", type="password")
+            new_pin_confirm = st.text_input(
+                "Confirm PIN", type="password"
+            )
+            new_permissions = st.multiselect(
+                "Permissions",
+                list(PERMISSION_LABELS.keys()),
+                format_func=lambda p: PERMISSION_LABELS[p],
+                default=["record_usage", "record_restock"],
+            )
+
+            if st.form_submit_button("➕ Add Authorized User"):
+                initials_used = {
+                    u["initials"].upper() for u in st.session_state.users
+                }
+
+                if not new_name.strip() or not new_initials:
+                    st.error("Name and initials are required.")
+                elif new_initials in initials_used:
+                    st.error("Those initials are already in use.")
+                elif len(new_pin) < 4:
+                    st.error("PIN must be at least 4 characters.")
+                elif new_pin != new_pin_confirm:
+                    st.error("PIN confirmation does not match.")
+                else:
+                    st.session_state.users.append({
+                        "name": new_name.strip(),
+                        "initials": new_initials,
+                        "pin_hash": hash_pin(new_pin),
+                        "permissions": new_permissions,
+                        "active": True,
+                    })
+                    st.success("Authorized user added.")
+                    st.rerun()
+
+        st.caption("Authorized users")
+        for i, managed_user in enumerate(st.session_state.users):
+            with st.container(border=True):
+                st.write(
+                    f"**{managed_user['name']}** "
+                    f"({managed_user['initials']})"
+                )
+                st.caption(
+                    ", ".join(
+                        PERMISSION_LABELS[p]
+                        for p in managed_user["permissions"]
+                        if p in PERMISSION_LABELS
+                    ) or "No permissions"
+                )
+
+                left, right = st.columns(2)
+
+                is_self = (
+                    user is not None
+                    and user["initials"] == managed_user["initials"]
+                )
+
+                with left:
+                    if st.button(
+                        "Disable" if managed_user["active"] else "Enable",
+                        key=f"toggle_user_{i}",
+                        disabled=is_self,
+                    ):
+                        st.session_state.users[i]["active"] = (
+                            not managed_user["active"]
+                        )
+                        st.rerun()
+
+                with right:
+                    if st.button(
+                        "Reset PIN", key=f"reset_pin_button_{i}"
+                    ):
+                        st.session_state[f"reset_pin_open_{i}"] = True
+
+                if st.session_state.get(f"reset_pin_open_{i}", False):
+                    with st.form(f"reset_pin_form_{i}"):
+                        p1 = st.text_input(
+                            "New PIN", type="password"
+                        )
+                        p2 = st.text_input(
+                            "Confirm New PIN", type="password"
+                        )
+
+                        if st.form_submit_button("Save New PIN"):
+                            if len(p1) < 4:
+                                st.error("PIN must be at least 4 characters.")
+                            elif p1 != p2:
+                                st.error("PIN confirmation does not match.")
+                            else:
+                                st.session_state.users[i]["pin_hash"] = hash_pin(p1)
+                                st.session_state.pop(
+                                    f"reset_pin_open_{i}", None
+                                )
+                                st.success("PIN reset.")
+                                st.rerun()
 
 st.sidebar.header("🛡️ Operations Hub")
 
@@ -593,6 +786,33 @@ st.divider()
 # 11. INVENTORY / MIN-MAX GRID
 # ============================================================
 
+
+# ============================================================
+# MIN/MAX ADMIN LOCK
+# ============================================================
+if has_permission("manage_minmax"):
+    st.sidebar.divider()
+    st.sidebar.subheader("🔐 Min/Max Settings")
+
+    if st.session_state.minmax_unlocked:
+        st.sidebar.success("Min/Max editing is UNLOCKED.")
+        if st.sidebar.button(
+            "🔒 Lock Min/Max", key="lock_minmax"
+        ):
+            st.session_state.minmax_unlocked = False
+            st.rerun()
+    else:
+        if st.sidebar.button(
+            "🔓 Unlock Min/Max", key="unlock_minmax"
+        ):
+            st.session_state.minmax_unlocked = True
+            st.rerun()
+else:
+    st.sidebar.caption(
+        "Min/Max settings are restricted to users with the "
+        "'Manage medication Min/Max' permission."
+    )
+
 st.subheader("📊 Active Operations Grid — %s" % selected_rig)
 st.markdown(
     "Set the operational **Min/Max**, current quantity, and expiration date. "
@@ -605,10 +825,24 @@ edited_data = st.data_editor(
         "id": st.column_config.TextColumn("Medication ID", disabled=True),
         "name": st.column_config.TextColumn("Medication Name", disabled=True),
         "min": st.column_config.NumberColumn(
-            "Min", min_value=0, step=1, required=True
+            "Min",
+            min_value=0,
+            step=1,
+            required=True,
+            disabled=not (
+                has_permission("manage_minmax")
+                and st.session_state.get("minmax_unlocked", False)
+            ),
         ),
         "max": st.column_config.NumberColumn(
-            "Max", min_value=0, step=1, required=True
+            "Max",
+            min_value=0,
+            step=1,
+            required=True,
+            disabled=not (
+                has_permission("manage_minmax")
+                and st.session_state.get("minmax_unlocked", False)
+            ),
         ),
         "count": st.column_config.NumberColumn(
             "Current", min_value=0, step=1, required=True
@@ -619,6 +853,7 @@ edited_data = st.data_editor(
     },
     hide_index=True,
     use_container_width=True,
+    disabled=not has_permission("edit_inventory"),
     key=f"grid_editor_{selected_rig}"
 )
 
@@ -648,10 +883,13 @@ if st.button("💾 Save Inventory / Min-Max Changes", type="primary"):
             )
             continue
 
-        raw_inventory[med_id]["min"] = minimum
-        raw_inventory[med_id]["max"] = maximum
-        raw_inventory[med_id]["count"] = current
-        raw_inventory[med_id]["expiry"] = updated_item["expiry"]
+        if has_permission("manage_minmax") and st.session_state.get("minmax_unlocked", False):
+            raw_inventory[med_id]["min"] = minimum
+            raw_inventory[med_id]["max"] = maximum
+
+        if has_permission("edit_inventory"):
+            raw_inventory[med_id]["count"] = current
+            raw_inventory[med_id]["expiry"] = updated_item["expiry"]
 
     if validation_errors:
         for error in validation_errors:
@@ -686,7 +924,10 @@ if available_ids:
         key="usage_qty"
     )
 
-    if st.button("➖ Record Usage"):
+    if st.button(
+        "➖ Record Usage",
+        disabled=not has_permission("record_usage"),
+    ):
         current_count = raw_inventory[usage_med_id]["count"]
         if usage_qty > current_count:
             st.error(
@@ -723,7 +964,10 @@ if available_ids:
         key="restock_qty"
     )
 
-    if st.button("➕ Record Restock"):
+    if st.button(
+        "➕ Record Restock",
+        disabled=not has_permission("record_restock"),
+    ):
         raw_inventory[restock_med_id]["count"] += restock_qty
         raw_inventory[restock_med_id]["restocked"] = (
             raw_inventory[restock_med_id].get("restocked", 0) + restock_qty
