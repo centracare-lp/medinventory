@@ -1,3 +1,4 @@
+from pathlib import Path
 import streamlit as st
 import datetime
 import json
@@ -21,23 +22,31 @@ import hashlib
 
 
 # ============================================================
-# USER MANAGEMENT & PERMISSIONS
+# PERSISTENT USER DATABASE & PERMISSIONS
 # ============================================================
-DEFAULT_USERS = [
-    {
-        "name": "Administrator",
-        "initials": "ADM",
-        "pin_hash": hashlib.sha256("1234".encode()).hexdigest(),
-        "permissions": [
-            "manage_users",
-            "manage_minmax",
-            "edit_inventory",
-            "record_usage",
-            "record_restock",
-        ],
-        "active": True,
-    }
-]
+#
+# Streamlit Community Cloud uses an ephemeral filesystem. A local
+# users.json file can therefore be lost when the app is redeployed
+# or the container is restarted.
+#
+# User accounts are stored in Supabase instead. Configure these
+# secrets in Streamlit Cloud:
+#
+# [supabase]
+# url = "https://YOUR_PROJECT.supabase.co"
+# service_role_key = "YOUR_SERVICE_ROLE_KEY"
+#
+# See the included supabase_users_schema.sql file for the table
+# definition.
+# ============================================================
+
+import requests
+
+SUPABASE_URL = st.secrets.get("supabase", {}).get("url", "").rstrip("/")
+SUPABASE_SERVICE_ROLE_KEY = st.secrets.get("supabase", {}).get(
+    "service_role_key", ""
+)
+SUPABASE_TABLE = "app_users"
 
 PERMISSION_LABELS = {
     "manage_users": "Manage users",
@@ -47,8 +56,117 @@ PERMISSION_LABELS = {
     "record_restock": "Record medication restock",
 }
 
+DEFAULT_ADMIN = {
+    "name": "Administrator",
+    "initials": "ADM",
+    "pin_hash": hashlib.sha256("1234".encode()).hexdigest(),
+    "permissions": list(PERMISSION_LABELS.keys()),
+    "active": True,
+}
+
 def hash_pin(pin):
     return hashlib.sha256(str(pin).encode()).hexdigest()
+
+def supabase_configured():
+    return bool(SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY)
+
+def supabase_headers():
+    return {
+        "apikey": SUPABASE_SERVICE_ROLE_KEY,
+        "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+        "Content-Type": "application/json",
+    }
+
+def load_users():
+    """Load authorized users from the persistent Supabase database."""
+    if not supabase_configured():
+        st.error(
+            "Persistent user database is not configured. "
+            "Add [supabase] url and service_role_key to Streamlit Secrets."
+        )
+        return []
+
+    try:
+        response = requests.get(
+            f"{SUPABASE_URL}/rest/v1/{SUPABASE_TABLE}",
+            headers={**supabase_headers(), "Accept": "application/json"},
+            params={
+                "select": "name,initials,pin_hash,permissions,active",
+                "order": "initials.asc",
+            },
+            timeout=10,
+        )
+        response.raise_for_status()
+        rows = response.json()
+
+        if not isinstance(rows, list):
+            raise ValueError("Supabase returned an invalid user database.")
+
+        users = []
+        for row in rows:
+            users.append({
+                "name": row["name"],
+                "initials": row["initials"],
+                "pin_hash": row["pin_hash"],
+                "permissions": row.get("permissions") or [],
+                "active": bool(row.get("active", True)),
+            })
+
+        # Bootstrap the first administrator if the table is empty.
+        if not users:
+            if save_users([copy.deepcopy(DEFAULT_ADMIN)]):
+                return [copy.deepcopy(DEFAULT_ADMIN)]
+            return []
+
+        return users
+
+    except (requests.RequestException, ValueError, KeyError, TypeError) as exc:
+        st.error(
+            "Unable to load the persistent user database from Supabase. "
+            f"Details: {exc}"
+        )
+        return []
+
+def save_users(users):
+    """Persist the complete in-memory user list to Supabase."""
+    if not supabase_configured():
+        st.error(
+            "Cannot save users because the Supabase database is not configured."
+        )
+        return False
+
+    rows = [
+        {
+            "name": user["name"],
+            "initials": user["initials"].upper(),
+            "pin_hash": user["pin_hash"],
+            "permissions": user.get("permissions", []),
+            "active": bool(user.get("active", True)),
+        }
+        for user in users
+    ]
+
+    try:
+        # Upsert by initials. This keeps accounts persistent across
+        # Streamlit restarts and deployments.
+        response = requests.post(
+            f"{SUPABASE_URL}/rest/v1/{SUPABASE_TABLE}",
+            headers={
+                **supabase_headers(),
+                "Prefer": "resolution=merge-duplicates,return=minimal",
+            },
+            json=rows,
+            timeout=10,
+        )
+        response.raise_for_status()
+        return True
+
+    except requests.RequestException as exc:
+        st.error(
+            "Unable to save the user database to Supabase. "
+            f"Details: {exc}"
+        )
+        return False
 
 def current_user():
     return st.session_state.get("current_user")
@@ -61,460 +179,11 @@ def has_permission(permission):
         and permission in user.get("permissions", [])
     )
 
-st.session_state.setdefault("users", copy.deepcopy(DEFAULT_USERS))
+if "users" not in st.session_state:
+    st.session_state.users = load_users()
+
 st.session_state.setdefault("current_user", None)
 st.session_state.setdefault("minmax_unlocked", False)
-
-MEDICATIONS = {
-    "adenosine": {
-        "name": "Adenosine",
-        "controlled": False,
-    },
-    "albuterol": {
-        "name": "Albuterol",
-        "controlled": False,
-    },
-    "amiodarone": {
-        "name": "Amiodarone",
-        "controlled": False,
-    },
-    "aspirin": {
-        "name": "Aspirin",
-        "controlled": False,
-    },
-    "atropine": {
-        "name": "Atropine",
-        "controlled": False,
-    },
-    "benadryl_iv": {
-        "name": "Benadryl (IV)",
-        "controlled": False,
-    },
-    "benadryl_oral": {
-        "name": "Benadryl (Oral)",
-        "controlled": False,
-    },
-    "calcium_chloride": {
-        "name": "Calcium Chloride",
-        "controlled": False,
-    },
-    "calcium_gluconate": {
-        "name": "Calcium Gluconate",
-        "controlled": False,
-    },
-    "cardizem": {
-        "name": "Cardizem",
-        "controlled": False,
-    },
-    "dextrose_oral": {
-        "name": "Dextrose (Oral)",
-        "controlled": False,
-    },
-    "dextrose_d10": {
-        "name": "Dextrose (D10)",
-        "controlled": False,
-    },
-    "dextrose_d50": {
-        "name": "Dextrose (D50)",
-        "controlled": False,
-    },
-    "diazepam": {
-        "name": "Diazepam (Valium)",
-        "controlled": True,
-    },
-    "dilaudid": {
-        "name": "Dilaudid",
-        "controlled": True,
-    },
-    "droperidol": {
-        "name": "Droperidol",
-        "controlled": False,
-    },
-    "duoneb": {
-        "name": "DuoNeb",
-        "controlled": False,
-    },
-    "epi_iv": {
-        "name": "Epi (IV) 1:10,000",
-        "controlled": False,
-    },
-    "epi_im": {
-        "name": "Epi (IM) 1:1,000",
-        "controlled": False,
-    },
-    "etomidate": {
-        "name": "Etomidate",
-        "controlled": False,
-    },
-    "fentanyl": {
-        "name": "Fentanyl",
-        "controlled": True,
-    },
-    "glucagon": {
-        "name": "Glucagon",
-        "controlled": False,
-    },
-    "haldol": {
-        "name": "Haldol",
-        "controlled": False,
-    },
-    "ketamine": {
-        "name": "Ketamine",
-        "controlled": True,
-    },
-    "labetalol": {
-        "name": "Labetalol",
-        "controlled": False,
-    },
-    "lidocaine": {
-        "name": "Lidocaine",
-        "controlled": False,
-    },
-    "mag_sulfate": {
-        "name": "Mag Sulfate",
-        "controlled": False,
-    },
-    "metoprolol": {
-        "name": "Metoprolol",
-        "controlled": False,
-    },
-    "midazolam": {
-        "name": "Midazolam",
-        "controlled": True,
-    },
-    "narcan": {
-        "name": "Narcan",
-        "controlled": False,
-    },
-    "nitro_tabs": {
-        "name": "Nitro (Tabs)",
-        "controlled": False,
-    },
-    "nitro_iv": {
-        "name": "Nitro (IV)",
-        "controlled": False,
-    },
-    "propofol": {
-        "name": "Propofol",
-        "controlled": True,
-    },
-    "racemic_epi": {
-        "name": "Racemic Epi",
-        "controlled": False,
-    },
-    "rocuronium": {
-        "name": "Rocuronium",
-        "controlled": False,
-    },
-    "sodium_bicarbonate": {
-        "name": "Sodium Bicarbonate",
-        "controlled": False,
-    },
-    "succinylcholine": {
-        "name": "Succinylcholine",
-        "controlled": False,
-    },
-    "terbutaline": {
-        "name": "Terbutaline",
-        "controlled": False,
-    },
-    "toradol": {
-        "name": "Toradol",
-        "controlled": False,
-    },
-    "tetracaine": {
-        "name": "Tetracaine (eye drop)",
-        "controlled": False,
-    },
-    "vecuronium": {
-        "name": "Vecuronium",
-        "controlled": False,
-    },
-    "zofran": {
-        "name": "Zofran",
-        "controlled": False,
-    },
-}
-
-
-# ============================================================
-# 2. INITIAL INVENTORY
-# ============================================================
-#
-# The medication definitions above are shared by all rigs.
-# Only the inventory-specific information lives here:
-#
-#     count
-#     expiry
-#
-# This means adding a new rig does NOT require duplicating the
-# entire medication manifest.
-# ============================================================
-
-INITIAL_INVENTORY = {
-    "Rig #356": {
-        "adenosine": {"count": 5, "expiry": "2027-05-12"},
-        "albuterol": {"count": 2, "expiry": "2026-10-01"},
-        "amiodarone": {"count": 3, "expiry": "2028-01-15"},
-        "aspirin": {"count": 2, "expiry": "2026-12-31"},
-        "atropine": {"count": 2, "expiry": "2027-05-12"},
-        "benadryl_iv": {"count": 1, "expiry": "2026-10-01"},
-        "benadryl_oral": {"count": 2, "expiry": "2028-01-15"},
-        "calcium_chloride": {"count": 3, "expiry": "2026-12-31"},
-        "calcium_gluconate": {"count": 0, "expiry": "2027-05-12"},
-        "cardizem": {"count": 1, "expiry": "2026-10-01"},
-        "dextrose_oral": {"count": 2, "expiry": "2028-01-15"},
-        "dextrose_d10": {"count": 1, "expiry": "2026-12-31"},
-        "dextrose_d50": {"count": 1, "expiry": "2027-05-12"},
-        "diazepam": {"count": 2, "expiry": "2026-10-01"},
-        "dilaudid": {"count": 1, "expiry": "2028-01-15"},
-        "droperidol": {"count": 2, "expiry": "2026-12-31"},
-        "duoneb": {"count": 4, "expiry": "2027-05-12"},
-        "epi_iv": {"count": 2, "expiry": "2026-10-01"},
-        "epi_im": {"count": 2, "expiry": "2028-01-15"},
-        "etomidate": {"count": 8, "expiry": "2026-12-31"},
-        "fentanyl": {"count": 4, "expiry": "2027-05-12"},
-        "glucagon": {"count": 2, "expiry": "2026-10-01"},
-        "haldol": {"count": 4, "expiry": "2028-01-15"},
-        "ketamine": {"count": 2, "expiry": "2026-12-31"},
-        "labetalol": {"count": 2, "expiry": "2027-05-12"},
-        "lidocaine": {"count": 3, "expiry": "2026-10-01"},
-        "mag_sulfate": {"count": 2, "expiry": "2028-01-15"},
-        "metoprolol": {"count": 2, "expiry": "2026-12-31"},
-        "midazolam": {"count": 2, "expiry": "2028-01-15"},
-        "narcan": {"count": 2, "expiry": "2026-12-31"},
-        "nitro_tabs": {"count": 2, "expiry": "2027-05-12"},
-        "nitro_iv": {"count": 2, "expiry": "2026-10-01"},
-        "propofol": {"count": 1, "expiry": "2028-01-15"},
-        "racemic_epi": {"count": 1, "expiry": "2026-12-31"},
-        "rocuronium": {"count": 1, "expiry": "2027-05-12"},
-        "sodium_bicarbonate": {"count": 2, "expiry": "2026-10-01"},
-        "succinylcholine": {"count": 2, "expiry": "2028-01-15"},
-        "terbutaline": {"count": 4, "expiry": "2026-12-31"},
-        "toradol": {"count": 0, "expiry": "2027-05-12"},
-        "tetracaine": {"count": 2, "expiry": "2026-10-01"},
-        "vecuronium": {"count": 2, "expiry": "2028-01-15"},
-        "zofran": {"count": 1, "expiry": "2026-12-31"},
-    },
-
-    "Rig #357": {
-        "adenosine": {"count": 5, "expiry": "2027-05-12"},
-        "albuterol": {"count": 2, "expiry": "2026-10-01"},
-        "amiodarone": {"count": 3, "expiry": "2028-01-15"},
-        "aspirin": {"count": 2, "expiry": "2026-12-31"},
-        "atropine": {"count": 2, "expiry": "2027-05-12"},
-        "benadryl_iv": {"count": 1, "expiry": "2026-10-01"},
-        "benadryl_oral": {"count": 2, "expiry": "2028-01-15"},
-        "calcium_chloride": {"count": 3, "expiry": "2026-12-31"},
-        "calcium_gluconate": {"count": 0, "expiry": "2027-05-12"},
-        "cardizem": {"count": 1, "expiry": "2026-10-01"},
-        "dextrose_oral": {"count": 2, "expiry": "2028-01-15"},
-        "dextrose_d10": {"count": 1, "expiry": "2026-12-31"},
-        "dextrose_d50": {"count": 1, "expiry": "2027-05-12"},
-        "diazepam": {"count": 2, "expiry": "2026-10-01"},
-        "dilaudid": {"count": 1, "expiry": "2028-01-15"},
-        "droperidol": {"count": 2, "expiry": "2026-12-31"},
-        "duoneb": {"count": 4, "expiry": "2027-05-12"},
-        "epi_iv": {"count": 2, "expiry": "2026-10-01"},
-        "epi_im": {"count": 2, "expiry": "2028-01-15"},
-        "etomidate": {"count": 8, "expiry": "2026-12-31"},
-        "fentanyl": {"count": 4, "expiry": "2027-05-12"},
-        "glucagon": {"count": 2, "expiry": "2026-10-01"},
-        "haldol": {"count": 4, "expiry": "2028-01-15"},
-        "ketamine": {"count": 2, "expiry": "2026-12-31"},
-        "labetalol": {"count": 2, "expiry": "2027-05-12"},
-        "lidocaine": {"count": 3, "expiry": "2026-10-01"},
-        "mag_sulfate": {"count": 2, "expiry": "2028-01-15"},
-        "metoprolol": {"count": 2, "expiry": "2026-12-31"},
-        "midazolam": {"count": 2, "expiry": "2028-01-15"},
-        "narcan": {"count": 2, "expiry": "2026-12-31"},
-        "nitro_tabs": {"count": 2, "expiry": "2027-05-12"},
-        "nitro_iv": {"count": 2, "expiry": "2026-10-01"},
-        "propofol": {"count": 1, "expiry": "2028-01-15"},
-        "racemic_epi": {"count": 1, "expiry": "2026-12-31"},
-        "rocuronium": {"count": 1, "expiry": "2027-05-12"},
-        "sodium_bicarbonate": {"count": 2, "expiry": "2026-10-01"},
-        "succinylcholine": {"count": 2, "expiry": "2028-01-15"},
-        "terbutaline": {"count": 4, "expiry": "2026-12-31"},
-        "toradol": {"count": 0, "expiry": "2027-05-12"},
-        "tetracaine": {"count": 2, "expiry": "2026-10-01"},
-        "vecuronium": {"count": 2, "expiry": "2028-01-15"},
-        "zofran": {"count": 1, "expiry": "2026-12-31"},
-    },
-}
-
-
-# ============================================================
-# 3. SESSION STATE INITIALIZATION
-# ============================================================
-
-# Min/max are operational targets, not clinical dosing guidance.
-# They are initialized from the existing inventory so the upgrade
-# does not unexpectedly change the current stock levels. Set the
-# desired minimum and maximum for each medication in the grid.
-for rig in INITIAL_INVENTORY:
-    for med_id, item in INITIAL_INVENTORY[rig].items():
-        item.setdefault("min", 0)
-        item.setdefault("max", item["count"])
-        item.setdefault("usage", 0)
-        item.setdefault("restocked", 0)
-
-if "inventory" not in st.session_state:
-    st.session_state["inventory"] = copy.deepcopy(INITIAL_INVENTORY)
-
-if "shift_usage" not in st.session_state:
-    st.session_state["shift_usage"] = {}
-
-if "shift_restock" not in st.session_state:
-    st.session_state["shift_restock"] = {}
-
-if "activity_log" not in st.session_state:
-    st.session_state["activity_log"] = []
-
-
-# ============================================================
-# 4. HELPER FUNCTIONS
-# ============================================================
-
-def build_visible_medication_list(rig, user_role):
-    """Return the selected rig's medications in data-editor format."""
-    visible = []
-
-    for med_id, med_info in MEDICATIONS.items():
-        if med_id not in st.session_state["inventory"][rig]:
-            continue
-
-        if med_info["controlled"] and user_role == "EMT / Basic":
-            continue
-
-        item = st.session_state["inventory"][rig][med_id]
-        visible.append({
-            "id": med_id,
-            "name": med_info["name"],
-            "min": item.get("min", 0),
-            "max": item.get("max", item["count"]),
-            "count": item["count"],
-            "expiry": item["expiry"],
-        })
-
-    return visible
-
-
-def visible_med_ids(rig, user_role):
-    return [item["id"] for item in build_visible_medication_list(rig, user_role)]
-
-
-def record_activity(rig, med_id, activity_type, quantity):
-
-    operator_initials = (
-        current_user()["initials"] if current_user() else "UNAUTH"
-    )
-    """Record a usage/restock event for the active shift."""
-    target = (
-        st.session_state["shift_usage"]
-        if activity_type == "usage"
-        else st.session_state["shift_restock"]
-    )
-
-    key = (rig, med_id)
-    target[key] = target.get(key, 0) + quantity
-
-    st.session_state["activity_log"].append({
-        "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "initials": operator_initials,
-        "rig": rig,
-        "med_id": med_id,
-        "medication": MEDICATIONS[med_id]["name"],
-        "type": activity_type,
-        "quantity": quantity,
-    })
-
-
-def get_status(item):
-    """Return a simple min/max inventory status."""
-    count = item["count"]
-    minimum = item.get("min", 0)
-    maximum = item.get("max", count)
-
-    if count <= minimum:
-        return "🔴 At/Below Min"
-    if count < maximum:
-        return "🟡 Below Max"
-    return "🟢 At Max"
-
-
-def build_shift_summary(rig, user_role):
-    """Create a plain-text summary suitable for copying or exporting."""
-    inventory = st.session_state["inventory"][rig]
-    usage = st.session_state["shift_usage"]
-    restock = st.session_state["shift_restock"]
-
-    lines = [
-        f"AMBULANCE MEDICATION SHIFT SUMMARY — {rig}",
-        f"Generated: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-        "",
-        "MEDICATION USAGE",
-        "----------------",
-    ]
-
-    usage_rows = []
-    for med_id, med_info in MEDICATIONS.items():
-        if med_id not in inventory:
-            continue
-        if med_info["controlled"] and user_role == "EMT / Basic":
-            continue
-        qty = usage.get((rig, med_id), 0)
-        if qty:
-            usage_rows.append((med_info["name"], qty))
-
-    if usage_rows:
-        lines.extend(f"{name}: {qty}" for name, qty in usage_rows)
-    else:
-        lines.append("None recorded")
-
-    lines.extend(["", "RESTOCK ACTIVITY", "-----------------"])
-
-    restock_rows = []
-    for med_id, med_info in MEDICATIONS.items():
-        if med_id not in inventory:
-            continue
-        if med_info["controlled"] and user_role == "EMT / Basic":
-            continue
-        qty = restock.get((rig, med_id), 0)
-        if qty:
-            restock_rows.append((med_info["name"], qty))
-
-    if restock_rows:
-        lines.extend(f"{name}: {qty}" for name, qty in restock_rows)
-    else:
-        lines.append("None recorded")
-
-    lines.extend(["", "RESTOCK NEEDED", "--------------"])
-
-    needs_restock = []
-    for med_id, med_info in MEDICATIONS.items():
-        if med_id not in inventory:
-            continue
-        if med_info["controlled"] and user_role == "EMT / Basic":
-            continue
-        item = inventory[med_id]
-        needed = max(0, item.get("max", item["count"]) - item["count"])
-        if needed:
-            needs_restock.append((med_info["name"], needed))
-
-    if needs_restock:
-        lines.extend(f"{name}: {qty}" for name, qty in needs_restock)
-    else:
-        lines.append("None")
-
-    return "\n".join(lines)
-
-
-# ============================================================
-# 5. USER INTERFACE
-# ============================================================
-
-st.title("🚑 Ambulance Med Check Dashboard")
 
 
 # ============================================================
@@ -593,9 +262,12 @@ with st.sidebar.expander("👤 User Access", expanded=True):
                         "permissions": new_permissions,
                         "active": True,
                     })
+                    save_users(st.session_state.users)
                     st.success("Authorized user added.")
                     st.rerun()
 
+        st.caption("Persistent database: Supabase")
+        st.caption("PINs are stored as SHA-256 hashes.")
         st.caption("Authorized users")
         for i, managed_user in enumerate(st.session_state.users):
             with st.container(border=True):
@@ -627,6 +299,7 @@ with st.sidebar.expander("👤 User Access", expanded=True):
                         st.session_state.users[i]["active"] = (
                             not managed_user["active"]
                         )
+                        save_users(st.session_state.users)
                         st.rerun()
 
                 with right:
@@ -651,6 +324,7 @@ with st.sidebar.expander("👤 User Access", expanded=True):
                                 st.error("PIN confirmation does not match.")
                             else:
                                 st.session_state.users[i]["pin_hash"] = hash_pin(p1)
+                                save_users(st.session_state.users)
                                 st.session_state.pop(
                                     f"reset_pin_open_{i}", None
                                 )
