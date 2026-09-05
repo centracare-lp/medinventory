@@ -4,6 +4,7 @@ import datetime
 import json
 import copy
 import hashlib
+from urllib.parse import urlparse
 
 
 # ============================================================
@@ -42,11 +43,41 @@ import hashlib
 
 import requests
 
-SUPABASE_URL = st.secrets.get("supabase", {}).get("url", "").rstrip("/")
+SUPABASE_URL = st.secrets.get("supabase", {}).get("url", "").strip().rstrip("/")
 SUPABASE_SERVICE_ROLE_KEY = st.secrets.get("supabase", {}).get(
     "service_role_key", ""
-)
+).strip()
 SUPABASE_TABLE = "app_users"
+
+
+def validate_supabase_url(url):
+    """Return a normalized Supabase project URL or an actionable error."""
+    if not url:
+        return "", "Supabase URL is missing from Streamlit Secrets."
+
+    # Allow users to enter the host without https://, but always use HTTPS.
+    if not url.startswith(("https://", "http://")):
+        url = "https://" + url
+
+    parsed = urlparse(url)
+    if parsed.scheme != "https" or not parsed.netloc:
+        return "", "Supabase URL must look like https://YOUR_PROJECT_REF.supabase.co"
+
+    host = parsed.netloc.lower()
+    if not host.endswith(".supabase.co") or any(ch in host for ch in [" ", "=", "\"", "'", "<", ">", "\t", "\r", "\n"]):
+        return "", (
+            "The Supabase URL is invalid. Use the Project URL from "
+            "Supabase → Settings → API. It should look like "
+            "https://xxxxxxxx.supabase.co — not an organization name or label."
+        )
+
+    if parsed.path not in ("", "/") or parsed.query or parsed.fragment:
+        return "", "Supabase URL should contain only the project URL, with no path, query string, or fragment."
+
+    return url.rstrip("/"), ""
+
+
+SUPABASE_URL, SUPABASE_URL_ERROR = validate_supabase_url(SUPABASE_URL)
 
 PERMISSION_LABELS = {
     "manage_users": "Manage users",
@@ -68,7 +99,7 @@ def hash_pin(pin):
     return hashlib.sha256(str(pin).encode()).hexdigest()
 
 def supabase_configured():
-    return bool(SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY)
+    return bool(SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY and not SUPABASE_URL_ERROR)
 
 def supabase_headers():
     return {
@@ -80,10 +111,13 @@ def supabase_headers():
 def load_users():
     """Load authorized users from the persistent Supabase database."""
     if not supabase_configured():
-        st.error(
-            "Persistent user database is not configured. "
-            "Add [supabase] url and service_role_key to Streamlit Secrets."
-        )
+        if SUPABASE_URL_ERROR:
+            st.error(f"Supabase configuration error: {SUPABASE_URL_ERROR}")
+        else:
+            st.error(
+                "Persistent user database is not configured. "
+                "Add [supabase] url and service_role_key to Streamlit Secrets."
+            )
         return []
 
     try:
@@ -130,9 +164,12 @@ def load_users():
 def save_users(users):
     """Persist the complete in-memory user list to Supabase."""
     if not supabase_configured():
-        st.error(
-            "Cannot save users because the Supabase database is not configured."
-        )
+        if SUPABASE_URL_ERROR:
+            st.error(f"Cannot save users: {SUPABASE_URL_ERROR}")
+        else:
+            st.error(
+                "Cannot save users because the Supabase database is not configured."
+            )
         return False
 
     rows = [
