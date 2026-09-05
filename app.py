@@ -301,42 +301,161 @@ INITIAL_INVENTORY = {
 # 3. SESSION STATE INITIALIZATION
 # ============================================================
 
+# Min/max are operational targets, not clinical dosing guidance.
+# They are initialized from the existing inventory so the upgrade
+# does not unexpectedly change the current stock levels. Set the
+# desired minimum and maximum for each medication in the grid.
+for rig in INITIAL_INVENTORY:
+    for med_id, item in INITIAL_INVENTORY[rig].items():
+        item.setdefault("min", 0)
+        item.setdefault("max", item["count"])
+        item.setdefault("usage", 0)
+        item.setdefault("restocked", 0)
+
 if "inventory" not in st.session_state:
     st.session_state["inventory"] = copy.deepcopy(INITIAL_INVENTORY)
 
+if "shift_usage" not in st.session_state:
+    st.session_state["shift_usage"] = {}
+
+if "shift_restock" not in st.session_state:
+    st.session_state["shift_restock"] = {}
+
+if "activity_log" not in st.session_state:
+    st.session_state["activity_log"] = []
+
 
 # ============================================================
-# 4. HELPER FUNCTION
+# 4. HELPER FUNCTIONS
 # ============================================================
 
 def build_visible_medication_list(rig, user_role):
-    """
-    Converts the structured inventory data into a flat list
-    suitable for Streamlit's data_editor.
-    """
-
+    """Return the selected rig's medications in data-editor format."""
     visible = []
 
     for med_id, med_info in MEDICATIONS.items():
-
-        # Make sure the medication exists in the selected rig.
         if med_id not in st.session_state["inventory"][rig]:
             continue
 
-        # Hide controlled medications from EMT/Basic users.
         if med_info["controlled"] and user_role == "EMT / Basic":
             continue
 
-        inventory_item = st.session_state["inventory"][rig][med_id]
-
+        item = st.session_state["inventory"][rig][med_id]
         visible.append({
             "id": med_id,
             "name": med_info["name"],
-            "count": inventory_item["count"],
-            "expiry": inventory_item["expiry"],
+            "min": item.get("min", 0),
+            "max": item.get("max", item["count"]),
+            "count": item["count"],
+            "expiry": item["expiry"],
         })
 
     return visible
+
+
+def visible_med_ids(rig, user_role):
+    return [item["id"] for item in build_visible_medication_list(rig, user_role)]
+
+
+def record_activity(rig, med_id, activity_type, quantity):
+    """Record a usage/restock event for the active shift."""
+    target = (
+        st.session_state["shift_usage"]
+        if activity_type == "usage"
+        else st.session_state["shift_restock"]
+    )
+
+    key = (rig, med_id)
+    target[key] = target.get(key, 0) + quantity
+
+    st.session_state["activity_log"].append({
+        "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "rig": rig,
+        "med_id": med_id,
+        "medication": MEDICATIONS[med_id]["name"],
+        "type": activity_type,
+        "quantity": quantity,
+    })
+
+
+def get_status(item):
+    """Return a simple min/max inventory status."""
+    count = item["count"]
+    minimum = item.get("min", 0)
+    maximum = item.get("max", count)
+
+    if count <= minimum:
+        return "🔴 At/Below Min"
+    if count < maximum:
+        return "🟡 Below Max"
+    return "🟢 At Max"
+
+
+def build_shift_summary(rig, user_role):
+    """Create a plain-text summary suitable for copying or exporting."""
+    inventory = st.session_state["inventory"][rig]
+    usage = st.session_state["shift_usage"]
+    restock = st.session_state["shift_restock"]
+
+    lines = [
+        f"AMBULANCE MEDICATION SHIFT SUMMARY — {rig}",
+        f"Generated: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        "",
+        "MEDICATION USAGE",
+        "----------------",
+    ]
+
+    usage_rows = []
+    for med_id, med_info in MEDICATIONS.items():
+        if med_id not in inventory:
+            continue
+        if med_info["controlled"] and user_role == "EMT / Basic":
+            continue
+        qty = usage.get((rig, med_id), 0)
+        if qty:
+            usage_rows.append((med_info["name"], qty))
+
+    if usage_rows:
+        lines.extend(f"{name}: {qty}" for name, qty in usage_rows)
+    else:
+        lines.append("None recorded")
+
+    lines.extend(["", "RESTOCK ACTIVITY", "-----------------"])
+
+    restock_rows = []
+    for med_id, med_info in MEDICATIONS.items():
+        if med_id not in inventory:
+            continue
+        if med_info["controlled"] and user_role == "EMT / Basic":
+            continue
+        qty = restock.get((rig, med_id), 0)
+        if qty:
+            restock_rows.append((med_info["name"], qty))
+
+    if restock_rows:
+        lines.extend(f"{name}: {qty}" for name, qty in restock_rows)
+    else:
+        lines.append("None recorded")
+
+    lines.extend(["", "RESTOCK NEEDED", "--------------"])
+
+    needs_restock = []
+    for med_id, med_info in MEDICATIONS.items():
+        if med_id not in inventory:
+            continue
+        if med_info["controlled"] and user_role == "EMT / Basic":
+            continue
+        item = inventory[med_id]
+        needed = max(0, item.get("max", item["count"]) - item["count"])
+        if needed:
+            needs_restock.append((med_info["name"], needed))
+
+    if needs_restock:
+        lines.extend(f"{name}: {qty}" for name, qty in needs_restock)
+    else:
+        lines.append("None")
+
+    return "\n".join(lines)
 
 
 # ============================================================
@@ -365,10 +484,24 @@ selected_rig = st.sidebar.radio(
 st.sidebar.markdown("---")
 st.sidebar.subheader("💾 Backup Utility")
 
-json_string = json.dumps(
-    st.session_state["inventory"],
-    indent=4
-)
+backup_data = {
+    "inventory": st.session_state["inventory"],
+    "shift_usage": st.session_state["shift_usage"],
+    "shift_restock": st.session_state["shift_restock"],
+    "activity_log": st.session_state["activity_log"],
+}
+
+# Convert tuple keys to strings so the backup is valid JSON.
+backup_data["shift_usage"] = {
+    f"{rig}|{med_id}": qty
+    for (rig, med_id), qty in st.session_state["shift_usage"].items()
+}
+backup_data["shift_restock"] = {
+    f"{rig}|{med_id}": qty
+    for (rig, med_id), qty in st.session_state["shift_restock"].items()
+}
+
+json_string = json.dumps(backup_data, indent=4)
 
 st.sidebar.download_button(
     label="⬇️ Download Backup Database",
@@ -383,7 +516,6 @@ st.sidebar.download_button(
 # ============================================================
 
 today = datetime.date.today()
-
 fifteen_days_out = today + datetime.timedelta(days=15)
 
 
@@ -392,11 +524,7 @@ fifteen_days_out = today + datetime.timedelta(days=15)
 # ============================================================
 
 raw_inventory = st.session_state["inventory"][selected_rig]
-
-visible_meds = build_visible_medication_list(
-    selected_rig,
-    user_role
-)
+visible_meds = build_visible_medication_list(selected_rig, user_role)
 
 
 # ============================================================
@@ -404,40 +532,31 @@ visible_meds = build_visible_medication_list(
 # ============================================================
 
 empty_meds = []
-low_meds = []
+min_meds = []
 expiring_meds = []
 all_expiration_dates = []
 
-
 for med in visible_meds:
+    item = raw_inventory[med["id"]]
 
     try:
         exp_date = datetime.datetime.strptime(
-            med["expiry"],
-            "%Y-%m-%d"
+            med["expiry"], "%Y-%m-%d"
         ).date()
-
         all_expiration_dates.append(exp_date)
-
     except ValueError:
         continue
 
-    # Inventory alerts
     if med["count"] == 0:
         empty_meds.append(med["name"])
 
-    elif med["count"] == 1:
-        low_meds.append(med["name"])
+    if med["count"] <= med["min"]:
+        min_meds.append(med["name"])
 
-    # Expiration alert
     if exp_date <= fifteen_days_out:
         expiring_meds.append(
-            "%s (%s)" % (
-                med["name"],
-                med["expiry"]
-            )
+            "%s (%s)" % (med["name"], med["expiry"])
         )
-
 
 if all_expiration_dates:
     earliest_expiry_date = min(all_expiration_dates)
@@ -449,139 +568,235 @@ else:
 # 10. METRICS & ALERTS
 # ============================================================
 
-st.subheader("⚠️ Critical Discrepancy & Expiration Logs")
+st.subheader("⚠️ Inventory & Expiration Status")
 
 col1, col2, col3, col4 = st.columns(4)
 
-col1.metric(
-    "Earliest Expiration Date",
-    str(earliest_expiry_date)
-)
-
-col2.error(
-    "🚨 Out of Stock (%d)" % len(empty_meds)
-)
-
-col3.warning(
-    "⚠️ Low Inventory (%d)" % len(low_meds)
-)
-
-col4.info(
-    "⏳ Expiring Soon (%d)" % len(expiring_meds)
-)
-
+col1.metric("Earliest Expiration Date", str(earliest_expiry_date))
+col2.error("🚨 Out of Stock (%d)" % len(empty_meds))
+col3.warning("⚠️ At/Below Min (%d)" % len(min_meds))
+col4.info("⏳ Expiring Soon (%d)" % len(expiring_meds))
 
 if empty_meds:
-    st.error(
-        "**CRITICAL - EMPTY:** %s"
-        % ", ".join(empty_meds)
-    )
+    st.error("**CRITICAL - EMPTY:** %s" % ", ".join(empty_meds))
 
-
-if low_meds:
-    st.warning(
-        "**NOTICE - LOW STOCK (1 Left):** %s"
-        % ", ".join(low_meds)
-    )
-
+if min_meds:
+    st.warning("**NOTICE - AT/BELOW MIN:** %s" % ", ".join(min_meds))
 
 if expiring_meds:
-    st.info(
-        "**NOTICE - EXPIRING < 15 DAYS:** %s"
-        % ", ".join(expiring_meds)
-    )
-
+    st.info("**NOTICE - EXPIRING < 15 DAYS:** %s" % ", ".join(expiring_meds))
 
 st.divider()
 
 
 # ============================================================
-# 11. INTERACTIVE MEDICATION GRID
+# 11. INVENTORY / MIN-MAX GRID
 # ============================================================
 
-st.subheader(
-    "📊 Active Operations Grid — %s"
-    % selected_rig
-)
-
+st.subheader("📊 Active Operations Grid — %s" % selected_rig)
 st.markdown(
-    "Adjust quantities and expiration dates directly "
-    "inside the data grid below:"
+    "Set the operational **Min/Max**, current quantity, and expiration date. "
+    "Usage and restocking are recorded separately below."
 )
-
 
 edited_data = st.data_editor(
     visible_meds,
-
     column_config={
-        "id": st.column_config.TextColumn(
-            "Medication ID",
-            disabled=True
+        "id": st.column_config.TextColumn("Medication ID", disabled=True),
+        "name": st.column_config.TextColumn("Medication Name", disabled=True),
+        "min": st.column_config.NumberColumn(
+            "Min", min_value=0, step=1, required=True
         ),
-
-        "name": st.column_config.TextColumn(
-            "Medication Name",
-            disabled=True
+        "max": st.column_config.NumberColumn(
+            "Max", min_value=0, step=1, required=True
         ),
-
         "count": st.column_config.NumberColumn(
-            "Quantity on Hand",
-            min_value=0,
-            step=1,
-            required=True
+            "Current", min_value=0, step=1, required=True
         ),
-
         "expiry": st.column_config.TextColumn(
-            "Expiration Date (YYYY-MM-DD)",
-            required=True
+            "Expiration Date (YYYY-MM-DD)", required=True
         ),
     },
-
     hide_index=True,
     use_container_width=True,
-    key="grid_editor"
+    key=f"grid_editor_{selected_rig}"
 )
 
-
-# ============================================================
-# 12. SAVE MATRIX CHANGES
-# ============================================================
-
-if st.button(
-    "💾 Save Matrix Changes",
-    type="primary"
-):
+if st.button("💾 Save Inventory / Min-Max Changes", type="primary"):
+    validation_errors = []
 
     for updated_item in edited_data:
-
         med_id = updated_item["id"]
+        if med_id not in raw_inventory:
+            continue
 
-        if med_id in raw_inventory:
+        minimum = int(updated_item["min"])
+        maximum = int(updated_item["max"])
+        current = int(updated_item["count"])
 
-            raw_inventory[med_id]["count"] = (
-                updated_item["count"]
+        if maximum < minimum:
+            validation_errors.append(
+                f"{updated_item['name']}: Max cannot be less than Min."
             )
+            continue
 
-            raw_inventory[med_id]["expiry"] = (
-                updated_item["expiry"]
+        try:
+            datetime.datetime.strptime(updated_item["expiry"], "%Y-%m-%d")
+        except ValueError:
+            validation_errors.append(
+                f"{updated_item['name']}: Expiration must be YYYY-MM-DD."
             )
+            continue
 
-    st.success(
-        "✅ Changes committed to current session cache successfully!"
-    )
+        raw_inventory[med_id]["min"] = minimum
+        raw_inventory[med_id]["max"] = maximum
+        raw_inventory[med_id]["count"] = current
+        raw_inventory[med_id]["expiry"] = updated_item["expiry"]
 
-    st.rerun()
+    if validation_errors:
+        for error in validation_errors:
+            st.error(error)
+    else:
+        st.success("✅ Inventory and Min/Max changes saved.")
+        st.rerun()
 
+
+# ============================================================
+# 12. SEPARATE USAGE & RESTOCK
+# ============================================================
 
 st.divider()
+st.subheader("💉 Medication Usage")
+st.caption("Record medication removed/used during the shift. This decreases Current inventory and is tracked separately from restocking.")
+
+available_ids = visible_med_ids(selected_rig, user_role)
+
+if available_ids:
+    usage_med_id = st.selectbox(
+        "Medication Used",
+        available_ids,
+        format_func=lambda med_id: MEDICATIONS[med_id]["name"],
+        key="usage_med"
+    )
+    usage_qty = st.number_input(
+        "Quantity Used",
+        min_value=1,
+        step=1,
+        value=1,
+        key="usage_qty"
+    )
+
+    if st.button("➖ Record Usage"):
+        current_count = raw_inventory[usage_med_id]["count"]
+        if usage_qty > current_count:
+            st.error(
+                f"Cannot record {usage_qty}. Only {current_count} on hand."
+            )
+        else:
+            raw_inventory[usage_med_id]["count"] = current_count - usage_qty
+            raw_inventory[usage_med_id]["usage"] = (
+                raw_inventory[usage_med_id].get("usage", 0) + usage_qty
+            )
+            record_activity(selected_rig, usage_med_id, "usage", usage_qty)
+            st.success(
+                f"Recorded {usage_qty} × {MEDICATIONS[usage_med_id]['name']} as used."
+            )
+            st.session_state.pop(f"grid_editor_{selected_rig}", None)
+            st.rerun()
+
+
+st.subheader("📦 Medication Restock")
+st.caption("Record medication added to the rig. Restocking is tracked separately from usage and increases Current inventory.")
+
+if available_ids:
+    restock_med_id = st.selectbox(
+        "Medication Restocked",
+        available_ids,
+        format_func=lambda med_id: MEDICATIONS[med_id]["name"],
+        key="restock_med"
+    )
+    restock_qty = st.number_input(
+        "Quantity Restocked",
+        min_value=1,
+        step=1,
+        value=1,
+        key="restock_qty"
+    )
+
+    if st.button("➕ Record Restock"):
+        raw_inventory[restock_med_id]["count"] += restock_qty
+        raw_inventory[restock_med_id]["restocked"] = (
+            raw_inventory[restock_med_id].get("restocked", 0) + restock_qty
+        )
+        record_activity(selected_rig, restock_med_id, "restock", restock_qty)
+        st.success(
+            f"Recorded {restock_qty} × {MEDICATIONS[restock_med_id]['name']} as restocked."
+        )
+        st.session_state.pop(f"grid_editor_{selected_rig}", None)
+        st.rerun()
 
 
 # ============================================================
-# 13. SHIFT SUMMARY
+# 13. RESTOCK NEEDS
 # ============================================================
 
+st.divider()
+st.subheader("📦 Restock Needs")
+
+restock_rows = []
+for med in visible_meds:
+    item = raw_inventory[med["id"]]
+    needed = max(0, item.get("max", item["count"]) - item["count"])
+    if needed > 0:
+        restock_rows.append({
+            "Medication": med["name"],
+            "Current": item["count"],
+            "Min": item.get("min", 0),
+            "Max": item.get("max", item["count"]),
+            "Restock Needed": needed,
+            "Status": get_status(item),
+        })
+
+if restock_rows:
+    st.dataframe(restock_rows, hide_index=True, use_container_width=True)
+else:
+    st.success("✅ All visible medications are at their Max target.")
+
+
+# ============================================================
+# 14. SHIFT SUMMARY
+# ============================================================
+
+st.divider()
 st.subheader("📋 Shift Summary Text Exporter")
 
-st.info(
-    "Shift Summary functionality will be added in the next development step."
+summary_text = build_shift_summary(selected_rig, user_role)
+st.text_area("Shift Summary", summary_text, height=350)
+
+st.download_button(
+    label="⬇️ Download Shift Summary",
+    data=summary_text,
+    file_name=f"{selected_rig.replace('#', '').replace(' ', '_')}_shift_summary.txt",
+    mime="text/plain"
 )
+
+
+# ============================================================
+# 15. SHIFT ACTIVITY LOG
+# ============================================================
+
+with st.expander("📝 View Shift Activity Log"):
+    rig_activity = [
+        event for event in st.session_state["activity_log"]
+        if event["rig"] == selected_rig
+    ]
+
+    if rig_activity:
+        st.dataframe(
+            list(reversed(rig_activity)),
+            hide_index=True,
+            use_container_width=True
+        )
+    else:
+        st.info("No usage or restock activity has been recorded for this rig yet.")
+
