@@ -181,6 +181,7 @@ DEFAULT_ADMIN = {
     "initials": "ADM",
     "pin_hash": hashlib.sha256("1234".encode()).hexdigest(),
     "permissions": list(PERMISSION_LABELS.keys()),
+    "provider_level": "Paramedic",
     "active": True,
 }
 
@@ -208,7 +209,7 @@ def load_users():
         response = requests.get(
             f"{SUPABASE_URL}/rest/v1/{SUPABASE_TABLE}",
             headers={**supabase_headers(), "Accept": "application/json"},
-            params={"select": "name,initials,pin_hash,permissions,active", "order": "initials.asc"},
+            params={"select": "name,initials,pin_hash,permissions,provider_level,active", "order": "initials.asc"},
             timeout=10,
         )
         response.raise_for_status()
@@ -221,6 +222,7 @@ def load_users():
                 "initials": row["initials"],
                 "pin_hash": row["pin_hash"],
                 "permissions": row.get("permissions") or [],
+                "provider_level": row.get("provider_level") or "EMT / Basic",
                 "active": bool(row.get("active", True)),
             }
             for row in rows
@@ -244,6 +246,7 @@ def save_users(users):
             "initials": user["initials"].upper(),
             "pin_hash": user["pin_hash"],
             "permissions": user.get("permissions", []),
+            "provider_level": user.get("provider_level", "EMT / Basic"),
             "active": bool(user.get("active", True)),
         }
         for user in users
@@ -445,6 +448,7 @@ with st.sidebar.expander("👤 User Access", expanded=True):
             new_initials = st.text_input("Initials", max_chars=5).strip().upper()
             new_pin = st.text_input("PIN", type="password")
             new_pin_confirm = st.text_input("Confirm PIN", type="password")
+            new_provider_level = st.selectbox("Provider Level", ["EMT / Basic", "Paramedic"])
             new_permissions = st.multiselect(
                 "Permissions",
                 list(PERMISSION_LABELS.keys()),
@@ -467,6 +471,7 @@ with st.sidebar.expander("👤 User Access", expanded=True):
                         "initials": new_initials,
                         "pin_hash": hash_pin(new_pin),
                         "permissions": new_permissions,
+                        "provider_level": new_provider_level,
                         "active": True,
                     })
                     if save_users(st.session_state.users):
@@ -476,6 +481,7 @@ with st.sidebar.expander("👤 User Access", expanded=True):
         for i, managed_user in enumerate(st.session_state.users):
             with st.container(border=True):
                 st.write(f"**{managed_user['name']}** ({managed_user['initials']})")
+                st.caption(f"Provider Level: {managed_user.get('provider_level', 'EMT / Basic')}")
                 st.caption(
                     ", ".join(
                         PERMISSION_LABELS[p]
@@ -504,6 +510,12 @@ with st.sidebar.expander("👤 User Access", expanded=True):
 
                 if st.session_state.get(f"edit_access_open_{i}", False):
                     with st.form(f"edit_access_form_{i}"):
+                        edited_provider_level = st.selectbox(
+                            "Provider Level",
+                            ["EMT / Basic", "Paramedic"],
+                            index=0 if managed_user.get("provider_level", "EMT / Basic") == "EMT / Basic" else 1,
+                            key=f"edit_provider_level_{i}",
+                        )
                         current_permissions = [
                             p for p in managed_user.get("permissions", [])
                             if p in PERMISSION_LABELS
@@ -525,6 +537,7 @@ with st.sidebar.expander("👤 User Access", expanded=True):
                                 st.error("Keep Manage users enabled for your own account.")
                             else:
                                 st.session_state.users[i]["permissions"] = edited_permissions
+                                st.session_state.users[i]["provider_level"] = edited_provider_level
                                 if is_self:
                                     st.session_state.current_user = copy.deepcopy(st.session_state.users[i])
                                 if save_users(st.session_state.users):
@@ -562,7 +575,7 @@ if mobile_device:
 
 with st.sidebar:
     st.header("🛡️ Operations Hub")
-    user_role = st.selectbox("Select Your Certification Level", ["EMT / Basic", "Paramedic"])
+    user_role = user.get("provider_level", "EMT / Basic")
     selected_rig = st.radio("Active Ambulance Unit", RIGS)
 
 # ============================================================
