@@ -483,7 +483,7 @@ with st.sidebar.expander("👤 User Access", expanded=True):
                         if p in PERMISSION_LABELS
                     ) or "No permissions"
                 )
-                left, right = st.columns(2)
+                left, middle, right = st.columns(3)
                 is_self = user["initials"] == managed_user["initials"]
                 with left:
                     if st.button(
@@ -493,9 +493,45 @@ with st.sidebar.expander("👤 User Access", expanded=True):
                         st.session_state.users[i]["active"] = not managed_user["active"]
                         save_users(st.session_state.users)
                         st.rerun()
+                with middle:
+                    if st.button("Edit Access", key=f"edit_access_button_{i}"):
+                        st.session_state[f"edit_access_open_{i}"] = not st.session_state.get(
+                            f"edit_access_open_{i}", False
+                        )
                 with right:
                     if st.button("Reset PIN", key=f"reset_pin_button_{i}"):
                         st.session_state[f"reset_pin_open_{i}"] = True
+
+                if st.session_state.get(f"edit_access_open_{i}", False):
+                    with st.form(f"edit_access_form_{i}"):
+                        current_permissions = [
+                            p for p in managed_user.get("permissions", [])
+                            if p in PERMISSION_LABELS
+                        ]
+                        edited_permissions = st.multiselect(
+                            "Permissions",
+                            list(PERMISSION_LABELS.keys()),
+                            format_func=lambda p: PERMISSION_LABELS[p],
+                            default=current_permissions,
+                            key=f"edit_permissions_{i}",
+                        )
+                        if is_self:
+                            st.caption(
+                                "Your own Manage users permission cannot be removed here. "
+                                "This prevents an administrator from accidentally locking themselves out."
+                            )
+                        if st.form_submit_button("💾 Save Access Changes"):
+                            if is_self and "manage_users" not in edited_permissions:
+                                st.error("Keep Manage users enabled for your own account.")
+                            else:
+                                st.session_state.users[i]["permissions"] = edited_permissions
+                                if is_self:
+                                    st.session_state.current_user = copy.deepcopy(st.session_state.users[i])
+                                if save_users(st.session_state.users):
+                                    st.success(f"Access updated for {managed_user['name']}.")
+                                    st.session_state.pop(f"edit_access_open_{i}", None)
+                                    st.rerun()
+
                 if st.session_state.get(f"reset_pin_open_{i}", False):
                     with st.form(f"reset_pin_form_{i}"):
                         p1 = st.text_input("New PIN", type="password")
