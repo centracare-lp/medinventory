@@ -271,6 +271,19 @@ def has_permission(permission):
     return bool(user and user.get("active", False) and permission in user.get("permissions", []))
 
 
+def is_mobile_device():
+    """Best-effort device detection so phones get a purpose-built compact UI."""
+    try:
+        user_agent = st.context.headers.get("User-Agent", "").lower()
+        mobile_terms = (
+            "android", "iphone", "ipad", "ipod", "mobile",
+            "windows phone", "opera mini", "iemobile"
+        )
+        return any(term in user_agent for term in mobile_terms)
+    except Exception:
+        return False
+
+
 if "users" not in st.session_state:
     st.session_state.users = load_users()
 st.session_state.setdefault("current_user", None)
@@ -369,35 +382,60 @@ def parse_date(value):
 
 
 # ============================================================
-# 5. USER ACCESS / USER MANAGEMENT
+# 5. LOGIN / USER ACCESS
+# ============================================================
+# Authentication is intentionally the first screen.  This is especially
+# useful on phones, where the inventory should not be visible until the
+# user has signed in.
+# ============================================================
+
+if not current_user():
+    st.markdown("<div style='text-align:center; padding-top:2rem;'>", unsafe_allow_html=True)
+    st.title("💊 Ambulance Medication Inventory")
+    st.caption("Authorized Personnel Only")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    _, login_col, _ = st.columns([1, 2, 1])
+    with login_col:
+        with st.container(border=True):
+            st.subheader("🔐 Sign In")
+            login_initials = st.text_input(
+                "Initials", max_chars=5, key="login_initials",
+                placeholder="Enter your initials"
+            ).strip().upper()
+            login_pin = st.text_input(
+                "PIN", type="password", key="login_pin",
+                placeholder="Enter your PIN"
+            )
+            if st.button("🔓 Sign In", type="primary", use_container_width=True, key="sign_in"):
+                match = next(
+                    (
+                        u for u in st.session_state.users
+                        if u.get("active")
+                        and u.get("initials", "").upper() == login_initials
+                        and u.get("pin_hash") == hash_pin(login_pin)
+                    ),
+                    None,
+                )
+                if match:
+                    st.session_state.current_user = copy.deepcopy(match)
+                    st.session_state.minmax_unlocked = False
+                    st.rerun()
+                else:
+                    st.error("Invalid initials or PIN.")
+        st.caption("Authorized user accounts are managed by an administrator.")
+    st.stop()
+
+# ============================================================
+# AUTHENTICATED USER MANAGEMENT
 # ============================================================
 with st.sidebar.expander("👤 User Access", expanded=True):
     user = current_user()
-    if user:
-        st.success(f"Signed in: {user['name']} ({user['initials']})")
-        if st.button("🔒 Sign Out", key="sign_out"):
-            st.session_state.current_user = None
-            st.session_state.minmax_unlocked = False
-            st.rerun()
-    else:
-        login_initials = st.text_input("Initials", max_chars=5, key="login_initials").strip().upper()
-        login_pin = st.text_input("PIN", type="password", key="login_pin")
-        if st.button("Sign In", key="sign_in"):
-            match = next(
-                (
-                    u for u in st.session_state.users
-                    if u.get("active")
-                    and u.get("initials", "").upper() == login_initials
-                    and u.get("pin_hash") == hash_pin(login_pin)
-                ),
-                None,
-            )
-            if match:
-                st.session_state.current_user = copy.deepcopy(match)
-                st.session_state.minmax_unlocked = False
-                st.rerun()
-            else:
-                st.error("Invalid initials or PIN.")
+    st.success(f"Signed in: {user['name']} ({user['initials']})")
+    if st.button("🔒 Sign Out", key="sign_out", use_container_width=True):
+        st.session_state.current_user = None
+        st.session_state.minmax_unlocked = False
+        st.rerun()
 
     if has_permission("manage_users"):
         st.divider()
@@ -438,11 +476,20 @@ with st.sidebar.expander("👤 User Access", expanded=True):
         for i, managed_user in enumerate(st.session_state.users):
             with st.container(border=True):
                 st.write(f"**{managed_user['name']}** ({managed_user['initials']})")
-                st.caption(", ".join(PERMISSION_LABELS[p] for p in managed_user.get("permissions", []) if p in PERMISSION_LABELS) or "No permissions")
+                st.caption(
+                    ", ".join(
+                        PERMISSION_LABELS[p]
+                        for p in managed_user.get("permissions", [])
+                        if p in PERMISSION_LABELS
+                    ) or "No permissions"
+                )
                 left, right = st.columns(2)
-                is_self = user is not None and user["initials"] == managed_user["initials"]
+                is_self = user["initials"] == managed_user["initials"]
                 with left:
-                    if st.button("Disable" if managed_user["active"] else "Enable", key=f"toggle_user_{i}", disabled=is_self):
+                    if st.button(
+                        "Disable" if managed_user["active"] else "Enable",
+                        key=f"toggle_user_{i}", disabled=is_self,
+                    ):
                         st.session_state.users[i]["active"] = not managed_user["active"]
                         save_users(st.session_state.users)
                         st.rerun()
@@ -465,15 +512,22 @@ with st.sidebar.expander("👤 User Access", expanded=True):
                                 st.success("PIN reset.")
                                 st.rerun()
 
+# ============================================================
+# 6. OPERATIONS HUB
+# ============================================================
+
+mobile_device = is_mobile_device()
+
 st.title("💊 Ambulance Medication Inventory")
 st.caption("Operational medication inventory, usage, restocking, Min/Max controls, expiration tracking, and shift summaries.")
 
-if not current_user():
-    st.warning("Please sign in from User Access in the sidebar to record inventory changes.")
+if mobile_device:
+    st.info("📱 Mobile mode — simplified for quick use on a phone.")
 
-st.sidebar.header("🛡️ Operations Hub")
-user_role = st.sidebar.selectbox("Select Your Certification Level", ["EMT / Basic", "Paramedic"])
-selected_rig = st.sidebar.radio("Active Ambulance Unit", RIGS)
+with st.sidebar:
+    st.header("🛡️ Operations Hub")
+    user_role = st.selectbox("Select Your Certification Level", ["EMT / Basic", "Paramedic"])
+    selected_rig = st.radio("Active Ambulance Unit", RIGS)
 
 # ============================================================
 # 6. BACKUP UTILITY
@@ -531,7 +585,7 @@ if expiring_meds:
     st.info("**NOTICE — EXPIRING ≤ 15 DAYS:** " + ", ".join(expiring_meds))
 
 # ============================================================
-# 8. MIN/MAX ADMIN LOCK + INVENTORY GRID
+# 8. MIN/MAX ADMIN LOCK + INVENTORY VIEW
 # ============================================================
 
 st.divider()
@@ -547,95 +601,202 @@ if has_permission("manage_minmax"):
         st.session_state.minmax_unlocked = True
         st.rerun()
 
-st.subheader(f"📊 Active Operations Grid — {selected_rig}")
-st.caption("Edit current quantity and expiration only if you have inventory permission. Min/Max requires the separate Min/Max permission and unlock.")
+if mobile_device:
+    st.subheader(f"📱 Quick Inventory — {selected_rig}")
+    st.caption("Tap a medication to view or update its current quantity and expiration date.")
 
-edited_data = st.data_editor(
-    visible_meds,
-    column_config={
-        "id": st.column_config.TextColumn("Medication ID", disabled=True),
-        "name": st.column_config.TextColumn("Medication Name", disabled=True),
-        "min": st.column_config.NumberColumn("Min", min_value=0, step=1, disabled=not (has_permission("manage_minmax") and st.session_state.minmax_unlocked)),
-        "max": st.column_config.NumberColumn("Max", min_value=0, step=1, disabled=not (has_permission("manage_minmax") and st.session_state.minmax_unlocked)),
-        "count": st.column_config.NumberColumn("Current", min_value=0, step=1, disabled=not has_permission("edit_inventory")),
-        "expiry": st.column_config.TextColumn("Expiration Date (YYYY-MM-DD)", disabled=not has_permission("edit_inventory")),
-    },
-    hide_index=True,
-    use_container_width=True,
-    key=f"grid_editor_{selected_rig}",
-)
+    mobile_med_id = st.selectbox(
+        "Medication",
+        [m["id"] for m in visible_meds],
+        format_func=lambda x: MEDICATIONS[x]["name"],
+        key=f"mobile_med_{selected_rig}",
+    )
+    mobile_item = raw_inventory[mobile_med_id]
+    mobile_status = get_status(mobile_item)
+    status_text = {
+        "OUT OF STOCK": "🚨 OUT OF STOCK",
+        "AT / BELOW MIN": "⚠️ AT / BELOW MIN",
+        "OK": "🟢 OK",
+    }[mobile_status]
 
-if st.button("💾 Save Inventory / Min-Max Changes", type="primary", disabled=not (has_permission("edit_inventory") or has_permission("manage_minmax"))):
-    errors = []
-    for row in edited_data:
-        med_id = row["id"]
-        minimum, maximum, count = int(row["min"]), int(row["max"]), int(row["count"])
-        expiry = str(row["expiry"])
-        if maximum < minimum:
-            errors.append(f"{row['name']}: Max cannot be less than Min.")
-            continue
-        if parse_date(expiry) is None:
-            errors.append(f"{row['name']}: Expiration must be YYYY-MM-DD.")
-            continue
-        item = raw_inventory[med_id]
-        if has_permission("manage_minmax") and st.session_state.minmax_unlocked:
-            item["min"], item["max"] = minimum, maximum
-        if has_permission("edit_inventory"):
-            item["count"], item["expiry"] = max(0, count), expiry
-    if errors:
-        for error in errors:
-            st.error(error)
-    else:
-        st.success("✅ Inventory and Min/Max changes saved.")
-        st.rerun()
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Current", mobile_item["count"])
+    c2.metric("Min", mobile_item["min"])
+    c3.metric("Max", mobile_item["max"])
+    st.info(f"{status_text}  •  Expires {mobile_item['expiry']}")
+
+    if has_permission("edit_inventory") or has_permission("manage_minmax"):
+        with st.form(f"mobile_inventory_form_{selected_rig}"):
+            mobile_count = st.number_input(
+                "Current Quantity", min_value=0, step=1,
+                value=int(mobile_item["count"]),
+                disabled=not has_permission("edit_inventory"),
+            )
+            mobile_expiry = st.date_input(
+                "Expiration Date",
+                value=parse_date(mobile_item["expiry"]) or today + datetime.timedelta(days=365),
+                disabled=not has_permission("edit_inventory"),
+            )
+            if has_permission("manage_minmax") and st.session_state.minmax_unlocked:
+                m1, m2 = st.columns(2)
+                with m1:
+                    mobile_min = st.number_input("Min", min_value=0, step=1, value=int(mobile_item["min"]))
+                with m2:
+                    mobile_max = st.number_input("Max", min_value=0, step=1, value=int(mobile_item["max"]))
+            else:
+                mobile_min, mobile_max = mobile_item["min"], mobile_item["max"]
+
+            if st.form_submit_button("💾 Save Medication", type="primary", use_container_width=True):
+                if mobile_max < mobile_min:
+                    st.error("Max cannot be less than Min.")
+                else:
+                    if has_permission("manage_minmax") and st.session_state.minmax_unlocked:
+                        mobile_item["min"], mobile_item["max"] = int(mobile_min), int(mobile_max)
+                    if has_permission("edit_inventory"):
+                        mobile_item["count"] = int(mobile_count)
+                        mobile_item["expiry"] = mobile_expiry.isoformat()
+                    st.success("Medication inventory saved.")
+                    st.rerun()
+
+    with st.expander("📋 View All Medications", expanded=False):
+        for med in visible_meds:
+            item = raw_inventory[med["id"]]
+            st.markdown(
+                f"**{med['name']}**  \n"
+                f"Current: **{item['count']}**  •  Min: {item['min']}  •  Max: {item['max']}  \n"
+                f"Expires: {item['expiry']}  •  **{get_status(item)}**"
+            )
+            st.divider()
+else:
+    st.subheader(f"📊 Active Operations Grid — {selected_rig}")
+    st.caption("Edit current quantity and expiration only if you have inventory permission. Min/Max requires the separate Min/Max permission and unlock.")
+
+    edited_data = st.data_editor(
+        visible_meds,
+        column_config={
+            "id": st.column_config.TextColumn("Medication ID", disabled=True),
+            "name": st.column_config.TextColumn("Medication Name", disabled=True),
+            "min": st.column_config.NumberColumn("Min", min_value=0, step=1, disabled=not (has_permission("manage_minmax") and st.session_state.minmax_unlocked)),
+            "max": st.column_config.NumberColumn("Max", min_value=0, step=1, disabled=not (has_permission("manage_minmax") and st.session_state.minmax_unlocked)),
+            "count": st.column_config.NumberColumn("Current", min_value=0, step=1, disabled=not has_permission("edit_inventory")),
+            "expiry": st.column_config.TextColumn("Expiration Date (YYYY-MM-DD)", disabled=not has_permission("edit_inventory")),
+        },
+        hide_index=True,
+        use_container_width=True,
+        key=f"grid_editor_{selected_rig}",
+    )
+
+    if st.button("💾 Save Inventory / Min-Max Changes", type="primary", disabled=not (has_permission("edit_inventory") or has_permission("manage_minmax"))):
+        errors = []
+        for row in edited_data:
+            med_id = row["id"]
+            minimum, maximum, count = int(row["min"]), int(row["max"]), int(row["count"])
+            expiry = str(row["expiry"])
+            if maximum < minimum:
+                errors.append(f"{row['name']}: Max cannot be less than Min.")
+                continue
+            if parse_date(expiry) is None:
+                errors.append(f"{row['name']}: Expiration must be YYYY-MM-DD.")
+                continue
+            item = raw_inventory[med_id]
+            if has_permission("manage_minmax") and st.session_state.minmax_unlocked:
+                item["min"], item["max"] = minimum, maximum
+            if has_permission("edit_inventory"):
+                item["count"], item["expiry"] = max(0, count), expiry
+        if errors:
+            for error in errors:
+                st.error(error)
+        else:
+            st.success("✅ Inventory and Min/Max changes saved.")
+            st.rerun()
 
 # ============================================================
 # 9. SEPARATE USAGE / RESTOCK
 # ============================================================
 
 st.divider()
-left, right = st.columns(2)
 available_ids = visible_med_ids(selected_rig, user_role)
 
-with left:
-    st.subheader("💉 Medication Usage")
-    st.caption("Record medication removed/used during the shift. Quantity cannot exceed stock on hand.")
-    if available_ids:
-        usage_med_id = st.selectbox("Medication Used", available_ids, format_func=lambda x: MEDICATIONS[x]["name"], key="usage_med")
-        usage_qty = st.number_input("Quantity Used", min_value=1, step=1, value=1, key="usage_qty")
-        if st.button("➖ Record Usage", disabled=not has_permission("record_usage"), key="record_usage_button"):
-            item = raw_inventory[usage_med_id]
-            if usage_qty > item["count"]:
-                st.error(f"Cannot record {usage_qty}. Only {item['count']} on hand.")
-            else:
-                item["count"] -= int(usage_qty)
-                item["usage"] += int(usage_qty)
-                st.session_state.shift_usage[(selected_rig, usage_med_id)] = shift_totals(selected_rig, usage_med_id, "usage") + int(usage_qty)
-                record_activity(selected_rig, usage_med_id, "usage", usage_qty)
-                st.success(f"Recorded {usage_qty} × {MEDICATIONS[usage_med_id]['name']} as used.")
-                st.rerun()
+if mobile_device:
+    usage_tab, restock_tab = st.tabs(["💉 Record Usage", "📦 Record Restock"])
+    with usage_tab:
+        st.caption("Record medication removed/used during the shift. Quantity cannot exceed stock on hand.")
+        if available_ids:
+            usage_med_id = st.selectbox("Medication Used", available_ids, format_func=lambda x: MEDICATIONS[x]["name"], key="mobile_usage_med")
+            usage_qty = st.number_input("Quantity Used", min_value=1, step=1, value=1, key="mobile_usage_qty")
+            if st.button("➖ Record Usage", disabled=not has_permission("record_usage"), key="mobile_record_usage", use_container_width=True):
+                item = raw_inventory[usage_med_id]
+                if usage_qty > item["count"]:
+                    st.error(f"Cannot record {usage_qty}. Only {item['count']} on hand.")
+                else:
+                    item["count"] -= int(usage_qty)
+                    item["usage"] += int(usage_qty)
+                    st.session_state.shift_usage[(selected_rig, usage_med_id)] = shift_totals(selected_rig, usage_med_id, "usage") + int(usage_qty)
+                    record_activity(selected_rig, usage_med_id, "usage", usage_qty)
+                    st.success(f"Recorded {usage_qty} × {MEDICATIONS[usage_med_id]['name']} as used.")
+                    st.rerun()
 
-with right:
-    st.subheader("📦 Medication Restock")
-    st.caption("Record medication added to the rig. If the rig already has stock, the earliest expiration is retained.")
-    if available_ids:
-        restock_med_id = st.selectbox("Medication Restocked", available_ids, format_func=lambda x: MEDICATIONS[x]["name"], key="restock_med")
-        restock_qty = st.number_input("Quantity Restocked", min_value=1, step=1, value=1, key="restock_qty")
-        restock_expiry = st.date_input("Expiration of Incoming Stock", value=today + datetime.timedelta(days=365), key="restock_expiry")
-        if st.button("➕ Record Restock", disabled=not has_permission("record_restock"), key="record_restock_button"):
-            item = raw_inventory[restock_med_id]
-            incoming = restock_expiry
-            old_expiry = parse_date(item.get("expiry"))
-            if item["count"] <= 0 or old_expiry is None:
-                item["expiry"] = incoming.isoformat()
-            else:
-                item["expiry"] = min(old_expiry, incoming).isoformat()
-            item["count"] += int(restock_qty)
-            item["restocked"] += int(restock_qty)
-            st.session_state.shift_restock[(selected_rig, restock_med_id)] = shift_totals(selected_rig, restock_med_id, "restock") + int(restock_qty)
-            record_activity(selected_rig, restock_med_id, "restock", restock_qty, incoming.isoformat())
-            st.success(f"Recorded {restock_qty} × {MEDICATIONS[restock_med_id]['name']} as restocked. Active expiration: {item['expiry']}.")
-            st.rerun()
+    with restock_tab:
+        st.caption("Record medication added to the rig. If stock already exists, the earliest expiration is retained.")
+        if available_ids:
+            restock_med_id = st.selectbox("Medication Restocked", available_ids, format_func=lambda x: MEDICATIONS[x]["name"], key="mobile_restock_med")
+            restock_qty = st.number_input("Quantity Restocked", min_value=1, step=1, value=1, key="mobile_restock_qty")
+            restock_expiry = st.date_input("Expiration of Incoming Stock", value=today + datetime.timedelta(days=365), key="mobile_restock_expiry")
+            if st.button("➕ Record Restock", disabled=not has_permission("record_restock"), key="mobile_record_restock", use_container_width=True):
+                item = raw_inventory[restock_med_id]
+                incoming = restock_expiry
+                old_expiry = parse_date(item.get("expiry"))
+                if item["count"] <= 0 or old_expiry is None:
+                    item["expiry"] = incoming.isoformat()
+                else:
+                    item["expiry"] = min(old_expiry, incoming).isoformat()
+                item["count"] += int(restock_qty)
+                item["restocked"] += int(restock_qty)
+                st.session_state.shift_restock[(selected_rig, restock_med_id)] = shift_totals(selected_rig, restock_med_id, "restock") + int(restock_qty)
+                record_activity(selected_rig, restock_med_id, "restock", restock_qty, incoming.isoformat())
+                st.success(f"Recorded {restock_qty} × {MEDICATIONS[restock_med_id]['name']} as restocked. Active expiration: {item['expiry']}.")
+                st.rerun()
+else:
+    left, right = st.columns(2)
+    with left:
+        st.subheader("💉 Medication Usage")
+        st.caption("Record medication removed/used during the shift. Quantity cannot exceed stock on hand.")
+        if available_ids:
+            usage_med_id = st.selectbox("Medication Used", available_ids, format_func=lambda x: MEDICATIONS[x]["name"], key="usage_med")
+            usage_qty = st.number_input("Quantity Used", min_value=1, step=1, value=1, key="usage_qty")
+            if st.button("➖ Record Usage", disabled=not has_permission("record_usage"), key="record_usage_button"):
+                item = raw_inventory[usage_med_id]
+                if usage_qty > item["count"]:
+                    st.error(f"Cannot record {usage_qty}. Only {item['count']} on hand.")
+                else:
+                    item["count"] -= int(usage_qty)
+                    item["usage"] += int(usage_qty)
+                    st.session_state.shift_usage[(selected_rig, usage_med_id)] = shift_totals(selected_rig, usage_med_id, "usage") + int(usage_qty)
+                    record_activity(selected_rig, usage_med_id, "usage", usage_qty)
+                    st.success(f"Recorded {usage_qty} × {MEDICATIONS[usage_med_id]['name']} as used.")
+                    st.rerun()
+
+    with right:
+        st.subheader("📦 Medication Restock")
+        st.caption("Record medication added to the rig. If the rig already has stock, the earliest expiration is retained.")
+        if available_ids:
+            restock_med_id = st.selectbox("Medication Restocked", available_ids, format_func=lambda x: MEDICATIONS[x]["name"], key="restock_med")
+            restock_qty = st.number_input("Quantity Restocked", min_value=1, step=1, value=1, key="restock_qty")
+            restock_expiry = st.date_input("Expiration of Incoming Stock", value=today + datetime.timedelta(days=365), key="restock_expiry")
+            if st.button("➕ Record Restock", disabled=not has_permission("record_restock"), key="record_restock_button"):
+                item = raw_inventory[restock_med_id]
+                incoming = restock_expiry
+                old_expiry = parse_date(item.get("expiry"))
+                if item["count"] <= 0 or old_expiry is None:
+                    item["expiry"] = incoming.isoformat()
+                else:
+                    item["expiry"] = min(old_expiry, incoming).isoformat()
+                item["count"] += int(restock_qty)
+                item["restocked"] += int(restock_qty)
+                st.session_state.shift_restock[(selected_rig, restock_med_id)] = shift_totals(selected_rig, restock_med_id, "restock") + int(restock_qty)
+                record_activity(selected_rig, restock_med_id, "restock", restock_qty, incoming.isoformat())
+                st.success(f"Recorded {restock_qty} × {MEDICATIONS[restock_med_id]['name']} as restocked. Active expiration: {item['expiry']}.")
+                st.rerun()
 
 # ============================================================
 # 10. RESTOCK NEEDS + COPY-PASTE REQUEST
