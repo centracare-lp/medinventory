@@ -148,6 +148,7 @@ def initialize_inventory_state():
 SUPABASE_URL = st.secrets.get("supabase", {}).get("url", "").strip().rstrip("/")
 SUPABASE_SERVICE_ROLE_KEY = st.secrets.get("supabase", {}).get("service_role_key", "").strip()
 SUPABASE_TABLE = "app_users"
+SUPABASE_INVENTORY_TABLE = "medication_inventory"
 
 
 def validate_supabase_url(url):
@@ -265,6 +266,97 @@ def save_users(users):
         return False
 
 
+
+def inventory_rows_from_state():
+    rows = []
+    for rig in RIGS:
+        for med_id in MEDICATIONS:
+            item = st.session_state.inventory[rig][med_id]
+            rows.append({
+                "rig": rig,
+                "medication_id": med_id,
+                "count": int(item.get("count", 0)),
+                "min": int(item.get("min", MEDICATIONS[med_id]["min"])),
+                "max": int(item.get("max", MEDICATIONS[med_id]["max"])),
+                "expiry": str(item.get("expiry", default_expiry())),
+                "usage": int(item.get("usage", 0)),
+                "restocked": int(item.get("restocked", 0)),
+            })
+    return rows
+
+
+def save_inventory_rows(rows):
+    if not supabase_configured():
+        st.error("Cannot save inventory because the Supabase database is not configured.")
+        return False
+    try:
+        response = requests.post(
+            f"{SUPABASE_URL}/rest/v1/{SUPABASE_INVENTORY_TABLE}",
+            headers={**supabase_headers(), "Prefer": "resolution=merge-duplicates,return=minimal"},
+            json=rows,
+            timeout=10,
+        )
+        response.raise_for_status()
+        return True
+    except requests.RequestException as exc:
+        st.error(f"Unable to save inventory to Supabase. Details: {exc}")
+        return False
+
+
+def save_inventory_item(rig, med_id):
+    item = st.session_state.inventory[rig][med_id]
+    row = {
+        "rig": rig,
+        "medication_id": med_id,
+        "count": int(item["count"]),
+        "min": int(item["min"]),
+        "max": int(item["max"]),
+        "expiry": str(item["expiry"]),
+        "usage": int(item.get("usage", 0)),
+        "restocked": int(item.get("restocked", 0)),
+    }
+    return save_inventory_rows([row])
+
+
+def initialize_inventory_from_supabase():
+    initialize_inventory_state()
+    if not supabase_configured() or st.session_state.get("inventory_loaded_from_supabase"):
+        return
+    try:
+        response = requests.get(
+            f"{SUPABASE_URL}/rest/v1/{SUPABASE_INVENTORY_TABLE}",
+            headers={**supabase_headers(), "Accept": "application/json"},
+            params={"select": "rig,medication_id,count,min,max,expiry,usage,restocked"},
+            timeout=10,
+        )
+        response.raise_for_status()
+        rows = response.json()
+        if not isinstance(rows, list):
+            raise ValueError("Supabase returned an invalid inventory database.")
+
+        if rows:
+            for row in rows:
+                rig = row.get("rig")
+                med_id = row.get("medication_id")
+                if rig in RIGS and med_id in MEDICATIONS:
+                    st.session_state.inventory[rig][med_id] = {
+                        "count": max(0, int(row.get("count", 0))),
+                        "min": max(0, int(row.get("min", MEDICATIONS[med_id]["min"]))),
+                        "max": max(0, int(row.get("max", MEDICATIONS[med_id]["max"]))),
+                        "expiry": str(row.get("expiry") or default_expiry()),
+                        "usage": max(0, int(row.get("usage", 0))),
+                        "restocked": max(0, int(row.get("restocked", 0))),
+                    }
+            st.session_state.inventory = normalize_inventory(st.session_state.inventory)
+        else:
+            # First run: create a complete inventory table using the app's safe zero-stock defaults.
+            save_inventory_rows(inventory_rows_from_state())
+
+        st.session_state.inventory_loaded_from_supabase = True
+    except (requests.RequestException, ValueError, TypeError) as exc:
+        st.error(f"Unable to load medication inventory from Supabase. Details: {exc}")
+
+
 def current_user():
     return st.session_state.get("current_user")
 
@@ -290,7 +382,7 @@ def is_mobile_device():
 if "users" not in st.session_state:
     st.session_state.users = load_users()
 st.session_state.setdefault("current_user", None)
-initialize_inventory_state()
+initialize_inventory_from_supabase()
 
 # ============================================================
 # 4. HELPERS
@@ -704,8 +796,9 @@ if mobile_device:
                     if has_permission("edit_inventory"):
                         mobile_item["count"] = int(mobile_count)
                         mobile_item["expiry"] = mobile_expiry.isoformat()
-                    st.success("Medication inventory saved.")
-                    st.rerun()
+                    if save_inventory_item(selected_rig, mobile_med_id):
+                        st.success("Medication inventory saved to Supabase.")
+                        st.rerun()
 
     with st.expander("📋 View All Medications", expanded=False):
         for med in visible_meds:
@@ -756,8 +849,21 @@ else:
             for error in errors:
                 st.error(error)
         else:
-            st.success("✅ Inventory and Min/Max changes saved.")
-            st.rerun()
+            if save_inventory_rows([
+                {
+                    "rig": selected_rig,
+                    "medication_id": med_id,
+                    "count": int(raw_inventory[med_id]["count"]),
+                    "min": int(raw_inventory[med_id]["min"]),
+                    "max": int(raw_inventory[med_id]["max"]),
+                    "expiry": str(raw_inventory[med_id]["expiry"]),
+                    "usage": int(raw_inventory[med_id].get("usage", 0)),
+                    "restocked": int(raw_inventory[med_id].get("restocked", 0)),
+                }
+                for med_id in raw_inventory
+            ]):
+                st.success("✅ Inventory and Min/Max changes saved to Supabase.")
+                st.rerun()
 
 # ============================================================
 # 9. SEPARATE USAGE / RESTOCK
@@ -782,8 +888,9 @@ if mobile_device:
                     item["usage"] += int(usage_qty)
                     st.session_state.shift_usage[(selected_rig, usage_med_id)] = shift_totals(selected_rig, usage_med_id, "usage") + int(usage_qty)
                     record_activity(selected_rig, usage_med_id, "usage", usage_qty)
-                    st.success(f"Recorded {usage_qty} × {MEDICATIONS[usage_med_id]['name']} as used.")
-                    st.rerun()
+                    if save_inventory_item(selected_rig, usage_med_id):
+                        st.success(f"Recorded {usage_qty} × {MEDICATIONS[usage_med_id]['name']} as used.")
+                        st.rerun()
 
     with restock_tab:
         st.caption("Record medication added to the rig. If stock already exists, the earliest expiration is retained.")
@@ -803,8 +910,9 @@ if mobile_device:
                 item["restocked"] += int(restock_qty)
                 st.session_state.shift_restock[(selected_rig, restock_med_id)] = shift_totals(selected_rig, restock_med_id, "restock") + int(restock_qty)
                 record_activity(selected_rig, restock_med_id, "restock", restock_qty, incoming.isoformat())
-                st.success(f"Recorded {restock_qty} × {MEDICATIONS[restock_med_id]['name']} as restocked. Active expiration: {item['expiry']}.")
-                st.rerun()
+                if save_inventory_item(selected_rig, restock_med_id):
+                    st.success(f"Recorded {restock_qty} × {MEDICATIONS[restock_med_id]['name']} as restocked. Active expiration: {item['expiry']}.")
+                    st.rerun()
 else:
     left, right = st.columns(2)
     with left:
@@ -822,8 +930,9 @@ else:
                     item["usage"] += int(usage_qty)
                     st.session_state.shift_usage[(selected_rig, usage_med_id)] = shift_totals(selected_rig, usage_med_id, "usage") + int(usage_qty)
                     record_activity(selected_rig, usage_med_id, "usage", usage_qty)
-                    st.success(f"Recorded {usage_qty} × {MEDICATIONS[usage_med_id]['name']} as used.")
-                    st.rerun()
+                    if save_inventory_item(selected_rig, usage_med_id):
+                        st.success(f"Recorded {usage_qty} × {MEDICATIONS[usage_med_id]['name']} as used.")
+                        st.rerun()
 
     with right:
         st.subheader("📦 Medication Restock")
@@ -844,8 +953,9 @@ else:
                 item["restocked"] += int(restock_qty)
                 st.session_state.shift_restock[(selected_rig, restock_med_id)] = shift_totals(selected_rig, restock_med_id, "restock") + int(restock_qty)
                 record_activity(selected_rig, restock_med_id, "restock", restock_qty, incoming.isoformat())
-                st.success(f"Recorded {restock_qty} × {MEDICATIONS[restock_med_id]['name']} as restocked. Active expiration: {item['expiry']}.")
-                st.rerun()
+                if save_inventory_item(selected_rig, restock_med_id):
+                    st.success(f"Recorded {restock_qty} × {MEDICATIONS[restock_med_id]['name']} as restocked. Active expiration: {item['expiry']}.")
+                    st.rerun()
 
 # ============================================================
 # 10. RESTOCK NEEDS + COPY-PASTE REQUEST
