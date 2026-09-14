@@ -4,6 +4,7 @@ import datetime
 import json
 import copy
 import hashlib
+import io
 from urllib.parse import urlparse
 import requests
 
@@ -149,6 +150,7 @@ SUPABASE_URL = st.secrets.get("supabase", {}).get("url", "").strip().rstrip("/")
 SUPABASE_SERVICE_ROLE_KEY = st.secrets.get("supabase", {}).get("service_role_key", "").strip()
 SUPABASE_TABLE = "app_users"
 SUPABASE_INVENTORY_TABLE = "medication_inventory"
+SUPABASE_MEDICATION_TABLE = "medication_master"
 
 
 def validate_supabase_url(url):
@@ -267,6 +269,246 @@ def save_users(users):
 
 
 
+def medication_master_rows():
+    return [
+        {
+            "medication_id": med_id,
+            "name": med["name"],
+            "controlled": bool(med["controlled"]),
+            "min": int(med["min"]),
+            "max": int(med["max"]),
+            "active": True,
+        }
+        for med_id, med in MEDICATIONS.items()
+    ]
+
+
+def apply_medication_master(rows):
+    """Apply validated master rows while preserving existing medication IDs."""
+    global MEDICATIONS, MEDICATION_DEFINITIONS
+    new_meds = {}
+    new_defs = []
+    for row in rows:
+        med_id = row["medication_id"]
+        name = row["name"]
+        controlled = bool(row["controlled"])
+        minimum = int(row["min"])
+        maximum = int(row["max"])
+        new_meds[med_id] = {
+            "id": med_id,
+            "name": name,
+            "controlled": controlled,
+            "min": minimum,
+            "max": maximum,
+        }
+        new_defs.append((med_id, name, controlled, minimum, maximum))
+
+    MEDICATIONS = new_meds
+    MEDICATION_DEFINITIONS = new_defs
+
+
+def load_medication_master():
+    """Load the persistent medication master if the Supabase table exists."""
+    if not supabase_configured() or st.session_state.get("medication_master_loaded"):
+        return
+    try:
+        response = requests.get(
+            f"{SUPABASE_URL}/rest/v1/{SUPABASE_MEDICATION_TABLE}",
+            headers={**supabase_headers(), "Accept": "application/json"},
+            params={"select": "medication_id,name,controlled,min,max,active", "order": "medication_id.asc"},
+            timeout=10,
+        )
+        response.raise_for_status()
+        rows = response.json()
+        if not isinstance(rows, list):
+            raise ValueError("Supabase returned an invalid medication master list.")
+
+        active_rows = [
+            row for row in rows
+            if bool(row.get("active", True))
+        ]
+        if active_rows:
+            validated = []
+            seen = set()
+            for row in active_rows:
+                med_id = str(row.get("medication_id", "")).strip()
+                name = str(row.get("name", "")).strip()
+                if not med_id or not name or med_id in seen:
+                    continue
+                minimum = max(0, int(row.get("min", 0)))
+                maximum = max(minimum, int(row.get("max", minimum)))
+                validated.append({
+                    "medication_id": med_id,
+                    "name": name,
+                    "controlled": bool(row.get("controlled", False)),
+                    "min": minimum,
+                    "max": maximum,
+                    "active": True,
+                })
+                seen.add(med_id)
+            if validated:
+                apply_medication_master(validated)
+        else:
+            # First run after the table is created: seed it with the current hard-coded list.
+            save_medication_master_rows(medication_master_rows())
+
+        st.session_state.medication_master_loaded = True
+    except (requests.RequestException, ValueError, TypeError) as exc:
+        # Keep the built-in list working if the table has not been created yet.
+        st.session_state.medication_master_load_error = str(exc)
+
+
+def save_medication_master_rows(rows):
+    if not supabase_configured():
+        st.error("Cannot save the medication master list because the Supabase database is not configured.")
+        return False
+    try:
+        response = requests.post(
+            f"{SUPABASE_URL}/rest/v1/{SUPABASE_MEDICATION_TABLE}",
+            headers={**supabase_headers(), "Prefer": "resolution=merge-duplicates,return=minimal"},
+            json=rows,
+            timeout=10,
+        )
+        response.raise_for_status()
+        return True
+    except requests.RequestException as exc:
+        st.error(f"Unable to save the medication master list to Supabase. Details: {exc}")
+        return False
+
+
+def medication_master_excel_bytes():
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Medications"
+    headers = ["Medication ID", "Medication Name", "Controlled", "Min", "Max", "Active"]
+    ws.append(headers)
+    for row in medication_master_rows():
+        ws.append([
+            row["medication_id"], row["name"], row["controlled"],
+            row["min"], row["max"], row["active"],
+        ])
+
+    for cell in ws[1]:
+        cell.font = Font(bold=True)
+        cell.fill = PatternFill(fill_type="solid", fgColor="D9EAF7")
+        cell.alignment = Alignment(horizontal="center")
+    ws.freeze_panes = "A2"
+    widths = {"A": 28, "B": 38, "C": 14, "D": 10, "E": 10, "F": 10}
+    for col, width in widths.items():
+        ws.column_dimensions[col].width = width
+
+    info = wb.create_sheet("Instructions")
+    instructions = [
+        ["Ambulance Medication Master List"],
+        ["Edit the Medications sheet, then upload it back into the app."],
+        ["Medication ID is the permanent key. Do not change an existing ID if you want to preserve inventory."],
+        ["Medication Name can be corrected or updated."],
+        ["Controlled: TRUE hides the medication from EMT / Basic users; FALSE makes it visible."],
+        ["Min and Max are the default inventory levels for a new medication. Existing rig Min/Max values are preserved."],
+        ["Active: TRUE keeps the medication in the master list. FALSE removes it from the active list without deleting its historical inventory rows."],
+        ["To add a medication, use a new unique Medication ID."],
+    ]
+    for row in instructions:
+        info.append(row)
+    info.column_dimensions["A"].width = 115
+    info["A1"].font = Font(bold=True, size=14)
+    info.freeze_panes = "A2"
+
+    output = io.BytesIO()
+    wb.save(output)
+    return output.getvalue()
+
+
+def validate_medication_master_upload(uploaded_file):
+    from openpyxl import load_workbook
+
+    if uploaded_file is None:
+        return [], ["No spreadsheet was selected."]
+    try:
+        wb = load_workbook(uploaded_file, read_only=True, data_only=True)
+        if "Medications" not in wb.sheetnames:
+            return [], ["The spreadsheet must contain a sheet named 'Medications'."]
+        ws = wb["Medications"]
+        rows = list(ws.iter_rows(values_only=True))
+        if not rows:
+            return [], ["The Medications sheet is empty."]
+
+        headers = [str(v).strip() if v is not None else "" for v in rows[0]]
+        required = ["Medication ID", "Medication Name", "Controlled", "Min", "Max", "Active"]
+        if headers[:len(required)] != required:
+            return [], ["The first six columns must be: Medication ID, Medication Name, Controlled, Min, Max, Active."]
+
+        errors = []
+        cleaned = []
+        seen = set()
+        for excel_row, values in enumerate(rows[1:], start=2):
+            if all(v is None or str(v).strip() == "" for v in values):
+                continue
+            med_id = str(values[0]).strip() if len(values) > 0 and values[0] is not None else ""
+            name = str(values[1]).strip() if len(values) > 1 and values[1] is not None else ""
+            controlled_raw = values[2] if len(values) > 2 else None
+            minimum_raw = values[3] if len(values) > 3 else None
+            maximum_raw = values[4] if len(values) > 4 else None
+            active_raw = values[5] if len(values) > 5 else None
+
+            if not med_id:
+                errors.append(f"Row {excel_row}: Medication ID is required.")
+            elif med_id in seen:
+                errors.append(f"Row {excel_row}: Duplicate Medication ID '{med_id}'.")
+            if not name:
+                errors.append(f"Row {excel_row}: Medication Name is required.")
+
+            def parse_bool(value, field):
+                if isinstance(value, bool):
+                    return value
+                text = str(value).strip().lower()
+                if text in {"true", "yes", "y", "1"}:
+                    return True
+                if text in {"false", "no", "n", "0"}:
+                    return False
+                errors.append(f"Row {excel_row}: {field} must be TRUE or FALSE.")
+                return False
+
+            controlled = parse_bool(controlled_raw, "Controlled")
+            active = parse_bool(active_raw, "Active")
+            try:
+                minimum = int(minimum_raw)
+                if minimum < 0:
+                    raise ValueError
+            except (TypeError, ValueError):
+                errors.append(f"Row {excel_row}: Min must be a whole number >= 0.")
+                minimum = 0
+            try:
+                maximum = int(maximum_raw)
+                if maximum < 0:
+                    raise ValueError
+            except (TypeError, ValueError):
+                errors.append(f"Row {excel_row}: Max must be a whole number >= 0.")
+                maximum = 0
+            if maximum < minimum:
+                errors.append(f"Row {excel_row}: Max cannot be less than Min.")
+
+            if med_id:
+                seen.add(med_id)
+            cleaned.append({
+                "medication_id": med_id,
+                "name": name,
+                "controlled": controlled,
+                "min": minimum,
+                "max": max(minimum, maximum),
+                "active": active,
+            })
+
+        if not cleaned:
+            errors.append("No medication rows were found.")
+        return cleaned, errors
+    except Exception as exc:
+        return [], [f"Could not read the spreadsheet: {exc}"]
+
+
 def inventory_rows_from_state():
     rows = []
     for rig in RIGS:
@@ -382,6 +624,7 @@ def is_mobile_device():
 if "users" not in st.session_state:
     st.session_state.users = load_users()
 st.session_state.setdefault("current_user", None)
+load_medication_master()
 initialize_inventory_from_supabase()
 
 # ============================================================
@@ -654,7 +897,61 @@ with st.sidebar.expander("👤 User Access", expanded=True):
                                 st.rerun()
 
 # ============================================================
-# 6. OPERATIONS HUB
+# 6. MEDICATION MASTER LIST MANAGEMENT
+# ============================================================
+if has_permission("manage_minmax"):
+    with st.sidebar.expander("💊 Medication Master List", expanded=False):
+        st.caption("Export the current medication list, edit it in Excel, then upload it back here.")
+        st.download_button(
+            "⬇️ Download Medication List",
+            data=medication_master_excel_bytes(),
+            file_name="ambulance_medication_master.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+            key="download_medication_master",
+        )
+        uploaded_master = st.file_uploader(
+            "Upload revised medication list",
+            type=["xlsx"],
+            key="medication_master_upload",
+            help="Use the Medications sheet from the exported workbook. Medication ID is the permanent key.",
+        )
+        if uploaded_master is not None:
+            upload_rows, upload_errors = validate_medication_master_upload(uploaded_master)
+            if upload_errors:
+                st.error("The spreadsheet was not applied. Fix these issues and upload it again:")
+                for error in upload_errors[:20]:
+                    st.write(f"• {error}")
+                if len(upload_errors) > 20:
+                    st.caption(f"...and {len(upload_errors) - 20} more errors.")
+            else:
+                current_ids = set(MEDICATIONS.keys())
+                uploaded_ids = {row["medication_id"] for row in upload_rows if row["active"]}
+                removed_ids = sorted(current_ids - uploaded_ids)
+                new_ids = sorted(uploaded_ids - current_ids)
+                st.success(f"Spreadsheet validated: {len(upload_rows)} medication rows.")
+                if new_ids:
+                    st.info(f"New medications: {len(new_ids)}")
+                if removed_ids:
+                    st.warning(
+                        f"Medications being removed from the active list: {len(removed_ids)}. "
+                        "Their existing inventory rows are not deleted."
+                    )
+                if st.button("✅ Apply Medication List", type="primary", use_container_width=True, key="apply_medication_master"):
+                    if save_medication_master_rows(upload_rows):
+                        apply_medication_master([r for r in upload_rows if r["active"]])
+                        # Preserve existing rig inventory. New medications receive safe zero-stock defaults.
+                        st.session_state.inventory = normalize_inventory(st.session_state.inventory)
+                        # Save all inventory rows so newly added medications exist in Supabase.
+                        if save_inventory_rows(inventory_rows_from_state()):
+                            st.session_state.medication_master_loaded = True
+                            st.success("Medication master list updated successfully.")
+                            st.rerun()
+                        else:
+                            st.error("The medication list was saved, but inventory synchronization failed. No existing inventory was deleted.")
+
+# ============================================================
+# 7. OPERATIONS HUB
 # ============================================================
 
 mobile_device = is_mobile_device()
