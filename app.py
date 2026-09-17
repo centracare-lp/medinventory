@@ -359,19 +359,54 @@ def load_medication_master():
 
 
 def save_medication_master_rows(rows):
+    """Upsert the complete medication master and explicitly deactivate omitted medications."""
     if not supabase_configured():
         st.error("Cannot save the medication master list because the Supabase database is not configured.")
         return False
     try:
+        existing_response = requests.get(
+            f"{SUPABASE_URL}/rest/v1/{SUPABASE_MEDICATION_TABLE}",
+            headers={**supabase_headers(), "Accept": "application/json"},
+            params={"select": "medication_id,name,controlled,min,max,active"},
+            timeout=10,
+        )
+        existing_response.raise_for_status()
+        existing_rows = existing_response.json()
+        if not isinstance(existing_rows, list):
+            raise ValueError("Supabase returned an invalid existing medication master.")
+
+        uploaded_ids = {str(row["medication_id"]).strip() for row in rows}
+        merged = []
+        for row in rows:
+            merged.append({
+                "medication_id": str(row["medication_id"]).strip(),
+                "name": str(row["name"]).strip(),
+                "controlled": bool(row["controlled"]),
+                "min": int(row["min"]),
+                "max": int(row["max"]),
+                "active": bool(row["active"]),
+            })
+        for old in existing_rows:
+            old_id = str(old.get("medication_id", "")).strip()
+            if old_id and old_id not in uploaded_ids:
+                merged.append({
+                    "medication_id": old_id,
+                    "name": str(old.get("name", old_id)),
+                    "controlled": bool(old.get("controlled", False)),
+                    "min": max(0, int(old.get("min", 0))),
+                    "max": max(0, int(old.get("max", 0))),
+                    "active": False,
+                })
+
         response = requests.post(
             f"{SUPABASE_URL}/rest/v1/{SUPABASE_MEDICATION_TABLE}",
-            headers={**supabase_headers(), "Prefer": "resolution=merge-duplicates,return=minimal"},
-            json=rows,
-            timeout=10,
+            headers={**supabase_headers(), "Prefer": "resolution=merge-duplicates,return=representation"},
+            json=merged,
+            timeout=15,
         )
         response.raise_for_status()
         return True
-    except requests.RequestException as exc:
+    except (requests.RequestException, ValueError, TypeError) as exc:
         st.error(f"Unable to save the medication master list to Supabase. Details: {exc}")
         return False
 
@@ -902,6 +937,10 @@ with st.sidebar.expander("👤 User Access", expanded=True):
 if has_permission("manage_minmax"):
     with st.sidebar.expander("💊 Medication Master List", expanded=False):
         st.caption("Export the current medication list, edit it in Excel, then upload it back here.")
+        if supabase_configured():
+            st.caption("🟢 Supabase connection configured.")
+        else:
+            st.error("🔴 Supabase is not configured. The medication master cannot be saved.")
         st.download_button(
             "⬇️ Download Medication List",
             data=medication_master_excel_bytes(),
@@ -924,31 +963,43 @@ if has_permission("manage_minmax"):
                     st.write(f"• {error}")
                 if len(upload_errors) > 20:
                     st.caption(f"...and {len(upload_errors) - 20} more errors.")
+                st.session_state.pop("validated_medication_master", None)
             else:
                 current_ids = set(MEDICATIONS.keys())
-                uploaded_ids = {row["medication_id"] for row in upload_rows if row["active"]}
-                removed_ids = sorted(current_ids - uploaded_ids)
-                new_ids = sorted(uploaded_ids - current_ids)
+                uploaded_active_ids = {row["medication_id"] for row in upload_rows if row["active"]}
+                removed_ids = sorted(current_ids - uploaded_active_ids)
+                new_ids = sorted(uploaded_active_ids - current_ids)
+                st.session_state.validated_medication_master = upload_rows
                 st.success(f"Spreadsheet validated: {len(upload_rows)} medication rows.")
                 if new_ids:
                     st.info(f"New medications: {len(new_ids)}")
                 if removed_ids:
-                    st.warning(
-                        f"Medications being removed from the active list: {len(removed_ids)}. "
-                        "Their existing inventory rows are not deleted."
-                    )
-                if st.button("✅ Apply Medication List", type="primary", use_container_width=True, key="apply_medication_master"):
-                    if save_medication_master_rows(upload_rows):
-                        apply_medication_master([r for r in upload_rows if r["active"]])
-                        # Preserve existing rig inventory. New medications receive safe zero-stock defaults.
-                        st.session_state.inventory = normalize_inventory(st.session_state.inventory)
-                        # Save all inventory rows so newly added medications exist in Supabase.
-                        if save_inventory_rows(inventory_rows_from_state()):
-                            st.session_state.medication_master_loaded = True
-                            st.success("Medication master list updated successfully.")
-                            st.rerun()
-                        else:
-                            st.error("The medication list was saved, but inventory synchronization failed. No existing inventory was deleted.")
+                    st.warning(f"Medications being removed from the active list: {len(removed_ids)}. Their existing inventory rows will be preserved.")
+                st.divider()
+                st.write("### Ready to Apply")
+                st.caption("Click the button below to save this validated list to Supabase and synchronize the active inventory.")
+                with st.form("apply_medication_master_form", clear_on_submit=False):
+                    apply_clicked = st.form_submit_button("✅ Apply Medication List", type="primary", use_container_width=True)
+                if apply_clicked:
+                    rows_to_apply = st.session_state.get("validated_medication_master", [])
+                    if not rows_to_apply:
+                        st.error("No validated medication list is available. Upload the spreadsheet again.")
+                    else:
+                        with st.spinner("Applying medication master list..."):
+                            master_saved = save_medication_master_rows(rows_to_apply)
+                            if master_saved:
+                                active_rows = [r for r in rows_to_apply if r["active"]]
+                                apply_medication_master(active_rows)
+                                st.session_state.inventory = normalize_inventory(st.session_state.inventory)
+                                inventory_saved = save_inventory_rows(inventory_rows_from_state())
+                                if inventory_saved:
+                                    st.session_state.medication_master_loaded = True
+                                    st.session_state.pop("validated_medication_master", None)
+                                    st.success(f"✅ Medication master list applied successfully. {len(active_rows)} active medications are now in the system.")
+                                    st.rerun()
+                                else:
+                                    st.error("The medication master list was saved, but the inventory synchronization failed. Existing inventory was not deleted.")
+
 
 # ============================================================
 # 7. OPERATIONS HUB
