@@ -974,31 +974,65 @@ if has_permission("manage_minmax"):
                 if new_ids:
                     st.info(f"New medications: {len(new_ids)}")
                 if removed_ids:
-                    st.warning(f"Medications being removed from the active list: {len(removed_ids)}. Their existing inventory rows will be preserved.")
-                st.divider()
-                st.write("### Ready to Apply")
-                st.caption("Click the button below to save this validated list to Supabase and synchronize the active inventory.")
-                with st.form("apply_medication_master_form", clear_on_submit=False):
-                    apply_clicked = st.form_submit_button("✅ Apply Medication List", type="primary", use_container_width=True)
-                if apply_clicked:
-                    rows_to_apply = st.session_state.get("validated_medication_master", [])
-                    if not rows_to_apply:
-                        st.error("No validated medication list is available. Upload the spreadsheet again.")
-                    else:
-                        with st.spinner("Applying medication master list..."):
-                            master_saved = save_medication_master_rows(rows_to_apply)
-                            if master_saved:
-                                active_rows = [r for r in rows_to_apply if r["active"]]
-                                apply_medication_master(active_rows)
-                                st.session_state.inventory = normalize_inventory(st.session_state.inventory)
-                                inventory_saved = save_inventory_rows(inventory_rows_from_state())
-                                if inventory_saved:
-                                    st.session_state.medication_master_loaded = True
-                                    st.session_state.pop("validated_medication_master", None)
-                                    st.success(f"✅ Medication master list applied successfully. {len(active_rows)} active medications are now in the system.")
-                                    st.rerun()
-                                else:
-                                    st.error("The medication master list was saved, but the inventory synchronization failed. Existing inventory was not deleted.")
+                    st.warning(
+                        f"Medications being removed from the active list: {len(removed_ids)}. "
+                        "Their existing inventory rows will be preserved."
+                    )
+
+        # Keep Apply outside the uploader's conditional block. Streamlit can rebuild
+        # the uploader on a form submit; the validated rows are safely retained in
+        # session state and the Apply button therefore remains available.
+        validated_rows = st.session_state.get("validated_medication_master")
+        if validated_rows:
+            st.divider()
+            st.write("### Ready to Apply")
+            st.caption(
+                "The spreadsheet has passed validation. Click Apply to save the "
+                "master list to Supabase and synchronize inventory."
+            )
+
+            with st.form("apply_medication_master_form", clear_on_submit=False):
+                apply_clicked = st.form_submit_button(
+                    "✅ Apply Medication List",
+                    type="primary",
+                    use_container_width=True,
+                )
+
+            if apply_clicked:
+                rows_to_apply = st.session_state.get("validated_medication_master") or []
+                st.info("Apply button received. Saving medication master list...")
+
+                with st.spinner("Applying medication master list..."):
+                    master_saved = save_medication_master_rows(rows_to_apply)
+
+                    if master_saved:
+                        active_rows = [r for r in rows_to_apply if r["active"]]
+                        apply_medication_master(active_rows)
+
+                        # Preserve existing inventory for matching IDs. New medications
+                        # receive safe zero-stock defaults.
+                        st.session_state.inventory = normalize_inventory(
+                            st.session_state.inventory
+                        )
+
+                        inventory_saved = save_inventory_rows(
+                            inventory_rows_from_state()
+                        )
+
+                        if inventory_saved:
+                            st.session_state.medication_master_loaded = True
+                            st.success(
+                                f"✅ Medication master list applied successfully. "
+                                f"{len(active_rows)} active medications are now in the system."
+                            )
+                            # Do not immediately rerun. Leave the success message visible
+                            # so the user can confirm that the operation actually completed.
+                            st.session_state.pop("validated_medication_master", None)
+                        else:
+                            st.error(
+                                "The medication master list was saved, but the inventory "
+                                "synchronization failed. Existing inventory was not deleted."
+                            )
 
 
 # ============================================================
