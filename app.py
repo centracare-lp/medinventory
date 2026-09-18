@@ -107,8 +107,8 @@ def build_initial_inventory():
     return {rig: build_empty_inventory() for rig in RIGS}
 
 
-def normalize_inventory(data):
-    """Repair old/missing inventory records without destroying valid data."""
+def normalize_inventory(data, sync_minmax_from_master=False):
+    """Repair inventory records while preserving counts/expiry and optionally syncing master Min/Max."""
     if not isinstance(data, dict):
         data = {}
     normalized = {}
@@ -117,16 +117,22 @@ def normalize_inventory(data):
         normalized[rig] = {}
         for med_id, med in MEDICATIONS.items():
             old = source.get(med_id, {}) if isinstance(source, dict) else {}
+
+            if sync_minmax_from_master:
+                minimum = max(0, int(med["min"]))
+                maximum = max(minimum, int(med["max"]))
+            else:
+                minimum = max(0, int(old.get("min", med["min"])))
+                maximum = max(minimum, int(old.get("max", med["max"])))
+
             normalized[rig][med_id] = {
                 "count": max(0, int(old.get("count", 0))),
-                "min": max(0, int(old.get("min", med["min"]))),
-                "max": max(0, int(old.get("max", med["max"]))),
+                "min": minimum,
+                "max": maximum,
                 "expiry": str(old.get("expiry", default_expiry())),
                 "usage": max(0, int(old.get("usage", 0))),
                 "restocked": max(0, int(old.get("restocked", 0))),
             }
-            if normalized[rig][med_id]["max"] < normalized[rig][med_id]["min"]:
-                normalized[rig][med_id]["max"] = normalized[rig][med_id]["min"]
     return normalized
 
 
@@ -1009,10 +1015,11 @@ if has_permission("manage_minmax"):
                         active_rows = [r for r in rows_to_apply if r["active"]]
                         apply_medication_master(active_rows)
 
-                        # Preserve existing inventory for matching IDs. New medications
-                        # receive safe zero-stock defaults.
+                        # Preserve count/expiry/usage/restock for matching IDs, but make
+                        # the uploaded master Min/Max authoritative for every active med.
                         st.session_state.inventory = normalize_inventory(
-                            st.session_state.inventory
+                            st.session_state.inventory,
+                            sync_minmax_from_master=True,
                         )
 
                         inventory_saved = save_inventory_rows(
@@ -1025,8 +1032,12 @@ if has_permission("manage_minmax"):
                                 f"✅ Medication master list applied successfully. "
                                 f"{len(active_rows)} active medications are now in the system."
                             )
-                            # Do not immediately rerun. Leave the success message visible
-                            # so the user can confirm that the operation actually completed.
+                            st.info(
+                                "The active medication list, Min/Max values, and inventory "
+                                "records have been synchronized with the uploaded master."
+                            )
+                            # Keep the validated list available for this render so the
+                            # success state is visible. Clear it after the next rerun.
                             st.session_state.pop("validated_medication_master", None)
                         else:
                             st.error(
