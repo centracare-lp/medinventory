@@ -107,6 +107,23 @@ def build_initial_inventory():
     return {rig: build_empty_inventory() for rig in RIGS}
 
 
+def purge_inactive_inventory(data):
+    """Keep only medication IDs in the current active master list."""
+    if not isinstance(data, dict):
+        return {}
+    active_ids = set(MEDICATIONS.keys())
+    cleaned = {}
+    for rig, rig_data in data.items():
+        if not isinstance(rig_data, dict):
+            continue
+        cleaned[rig] = {
+            med_id: record
+            for med_id, record in rig_data.items()
+            if med_id in active_ids
+        }
+    return cleaned
+
+
 def normalize_inventory(data, sync_minmax_from_master=False):
     """Repair inventory records while preserving counts/expiry and optionally syncing master Min/Max."""
     if not isinstance(data, dict):
@@ -1017,9 +1034,11 @@ if has_permission("manage_minmax"):
 
                         # Preserve count/expiry/usage/restock for matching IDs, but make
                         # the uploaded master Min/Max authoritative for every active med.
-                        st.session_state.inventory = normalize_inventory(
-                            st.session_state.inventory,
-                            sync_minmax_from_master=True,
+                        st.session_state.inventory = purge_inactive_inventory(
+                            normalize_inventory(
+                                st.session_state.inventory,
+                                sync_minmax_from_master=True,
+                            )
                         )
 
                         inventory_saved = save_inventory_rows(
