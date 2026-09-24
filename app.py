@@ -330,9 +330,9 @@ def apply_medication_master(rows):
     MEDICATION_DEFINITIONS = new_defs
 
 
-def load_medication_master():
+def load_medication_master(force=False):
     """Load the persistent medication master if the Supabase table exists."""
-    if not supabase_configured() or st.session_state.get("medication_master_loaded"):
+    if not supabase_configured() or (st.session_state.get("medication_master_loaded") and not force):
         return
     try:
         response = requests.get(
@@ -382,57 +382,52 @@ def load_medication_master():
 
 
 def save_medication_master_rows(rows):
-    """Upsert the complete medication master and explicitly deactivate omitted medications."""
+    """Make the uploaded workbook authoritative for the active medication master."""
     if not supabase_configured():
         st.error("Cannot save the medication master list because the Supabase database is not configured.")
         return False
     try:
-        existing_response = requests.get(
+        headers = {**supabase_headers(), "Accept": "application/json", "Prefer": "return=representation"}
+        # First deactivate every active master record. Historical records remain,
+        # but only the uploaded workbook is active after this operation.
+        deactivate = requests.patch(
             f"{SUPABASE_URL}/rest/v1/{SUPABASE_MEDICATION_TABLE}",
-            headers={**supabase_headers(), "Accept": "application/json"},
-            params={"select": "medication_id,name,controlled,min,max,active"},
-            timeout=10,
+            headers=headers, params={"active": "eq.true"}, json={"active": False}, timeout=15
         )
-        existing_response.raise_for_status()
-        existing_rows = existing_response.json()
-        if not isinstance(existing_rows, list):
-            raise ValueError("Supabase returned an invalid existing medication master.")
+        deactivate.raise_for_status()
 
-        uploaded_ids = {str(row["medication_id"]).strip() for row in rows}
-        merged = []
+        authoritative_rows=[]; seen=set()
         for row in rows:
-            merged.append({
-                "medication_id": str(row["medication_id"]).strip(),
-                "name": str(row["name"]).strip(),
-                "controlled": bool(row["controlled"]),
-                "min": int(row["min"]),
-                "max": int(row["max"]),
-                "active": bool(row["active"]),
+            med_id=str(row["medication_id"]).strip()
+            if not med_id or med_id in seen: continue
+            seen.add(med_id)
+            authoritative_rows.append({
+                "medication_id": med_id, "name": str(row["name"]).strip(),
+                "controlled": bool(row["controlled"]), "min": max(0,int(row["min"])),
+                "max": max(0,int(row["max"])), "active": bool(row["active"])
             })
-        for old in existing_rows:
-            old_id = str(old.get("medication_id", "")).strip()
-            if old_id and old_id not in uploaded_ids:
-                merged.append({
-                    "medication_id": old_id,
-                    "name": str(old.get("name", old_id)),
-                    "controlled": bool(old.get("controlled", False)),
-                    "min": max(0, int(old.get("min", 0))),
-                    "max": max(0, int(old.get("max", 0))),
-                    "active": False,
-                })
 
-        response = requests.post(
+        response=requests.post(
             f"{SUPABASE_URL}/rest/v1/{SUPABASE_MEDICATION_TABLE}",
-            headers={**supabase_headers(), "Prefer": "resolution=merge-duplicates,return=representation"},
-            json=merged,
-            timeout=15,
+            headers={**supabase_headers(), "Accept":"application/json", "Prefer":"resolution=merge-duplicates,return=representation"},
+            json=authoritative_rows, timeout=15
         )
         response.raise_for_status()
+
+        verify=requests.get(
+            f"{SUPABASE_URL}/rest/v1/{SUPABASE_MEDICATION_TABLE}",
+            headers={**supabase_headers(), "Accept":"application/json"},
+            params={"select":"medication_id,name,controlled,min,max,active", "active":"eq.true"}, timeout=15
+        )
+        verify.raise_for_status()
+        actual={str(r.get("medication_id","")).strip() for r in verify.json()}
+        expected={str(r["medication_id"]).strip() for r in authoritative_rows if bool(r["active"])}
+        if actual != expected:
+            raise ValueError(f"Supabase master verification failed. Missing: {sorted(expected-actual)}; Unexpected active IDs: {sorted(actual-expected)}")
         return True
     except (requests.RequestException, ValueError, TypeError) as exc:
-        st.error(f"Unable to save the medication master list to Supabase. Details: {exc}")
+        st.error(f"Unable to save/verify the medication master list in Supabase. Details: {exc}")
         return False
-
 
 def medication_master_excel_bytes():
     from openpyxl import Workbook
@@ -1047,9 +1042,13 @@ if has_permission("manage_minmax"):
 
                         if inventory_saved:
                             st.session_state.medication_master_loaded = True
+                            load_medication_master(force=True)
+                            st.session_state.inventory = purge_inactive_inventory(
+                                normalize_inventory(st.session_state.inventory, sync_minmax_from_master=True)
+                            )
                             st.success(
                                 f"✅ Medication master list applied successfully. "
-                                f"{len(active_rows)} active medications are now in the system."
+                                f"{len(MEDICATIONS)} active medications are now in the system."
                             )
                             st.info(
                                 "The active medication list, Min/Max values, and inventory "
