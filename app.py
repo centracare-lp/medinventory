@@ -18,61 +18,8 @@ st.set_page_config(page_title="Ambulance Medication Inventory", page_icon="💊"
 # "controlled" hides the medication from EMT / Basic users.
 # ============================================================
 
-MEDICATION_DEFINITIONS = [
-    ("adenosine", "Adenosine", False, 0, 5),
-    ("albuterol", "Albuterol", False, 2, 4),
-    ("amiodarone", "Amiodarone", False, 3, 6),
-    ("aspirin", "Aspirin", False, 1, 2),
-    ("atropine", "Atropine", False, 2, 4),
-    ("calcium_chloride", "Calcium Chloride", False, 1, 2),
-    ("dextrose", "Dextrose D10", False, 1, 2),
-    ("dexd50", "Dextrose D50", False, 0, 1),
-    ("diltiazem", "Diltiazem", False, 2, 4),
-    ("diphenhydramine", "Diphenhydramine", False, 2, 6),
-    ("epinephrine_1_1000", "Epinephrine 1 mg/mL (1:1,000)", False, 4, 10),
-    ("epinephrine_1_10000", "Epinephrine 0.1 mg/mL (1:10,000)", False, 2, 6),
-    ("fentanyl", "Fentanyl", True, 2, 6),
-    ("glucagon", "Glucagon", False, 1, 2),
-    ("haloperidol", "Haloperidol", False, 2, 4),
-    ("hydroxocobalamin", "Hydroxocobalamin", False, 0, 1),
-    ("ipratropium", "Ipratropium", False, 2, 6),
-    ("ketamine", "Ketamine", True, 1, 4),
-    ("labetalol", "Labetalol", False, 2, 4),
-    ("lactated_ringers", "Lactated Ringers", False, 2, 6),
-    ("magnesium_sulfate", "Magnesium Sulfate", False, 2, 4),
-    ("methylprednisolone", "Methylprednisolone", False, 2, 4),
-    ("midazolam", "Midazolam", True, 2, 6),
-    ("naloxone", "Naloxone", False, 2, 6),
-    ("nitroglycerin", "Nitroglycerin", False, 2, 10),
-    ("norepinephrine", "Norepinephrine", False, 2, 4),
-    ("ondansetron", "Ondansetron", False, 2, 6),
-    ("oxytocin", "Oxytocin", False, 1, 2),
-    ("procainamide", "Procainamide", False, 1, 2),
-    ("prochlorperazine", "Prochlorperazine", False, 1, 2),
-    ("propofol", "Propofol", True, 1, 2),
-    ("sodium_bicarbonate", "Sodium Bicarbonate", False, 2, 4),
-    ("sterile_water", "Sterile Water", False, 1, 4),
-    ("thiamine", "Thiamine", False, 1, 2),
-    ("tranexamic_acid", "Tranexamic Acid (TXA)", False, 1, 2),
-    ("valproate", "Valproate", False, 1, 2),
-    ("diazepam", "Diazepam (Valium)", True, 1, 4),
-    ("hydromorphone", "Hydromorphone (Dilaudid)", True, 1, 4),
-    ("morphine", "Morphine", True, 1, 4),
-    ("ketorolac", "Ketorolac", False, 2, 6),
-    ("epinephrine_autoinjector", "Epinephrine Auto-Injector", False, 1, 2),
-    ("glucose_gel", "Oral Glucose Gel", False, 1, 4),
-]
-
-MEDICATIONS = {
-    med_id: {
-        "id": med_id,
-        "name": name,
-        "controlled": controlled,
-        "min": minimum,
-        "max": maximum,
-    }
-    for med_id, name, controlled, minimum, maximum in MEDICATION_DEFINITIONS
-}
+MEDICATION_DEFINITIONS = []
+MEDICATIONS = {}
 
 RIGS = ["Rig #356", "Rig #357"]
 
@@ -109,49 +56,118 @@ def build_initial_inventory():
 
 def purge_inactive_inventory(data):
     """Keep only medication IDs in the current active master list."""
+
     if not isinstance(data, dict):
         return {}
+
     active_ids = set(MEDICATIONS.keys())
+
     cleaned = {}
+
     for rig, rig_data in data.items():
+
         if not isinstance(rig_data, dict):
             continue
+
         cleaned[rig] = {
             med_id: record
             for med_id, record in rig_data.items()
             if med_id in active_ids
         }
+
     return cleaned
 
+def normalize_inventory(
+    data,
+    sync_minmax_from_master=False
+):
+    """
+    Repair inventory records while preserving counts,
+    expiration dates, usage and restock totals.
 
-def normalize_inventory(data, sync_minmax_from_master=False):
-    """Repair inventory records while preserving counts/expiry and optionally syncing master Min/Max."""
+    When sync_minmax_from_master is True, the Min/Max values
+    from the medication master become authoritative.
+    """
+
     if not isinstance(data, dict):
         data = {}
+
     normalized = {}
+
     for rig in RIGS:
+
         source = data.get(rig, {})
+
         normalized[rig] = {}
+
         for med_id, med in MEDICATIONS.items():
-            old = source.get(med_id, {}) if isinstance(source, dict) else {}
+
+            old = (
+                source.get(med_id, {})
+                if isinstance(source, dict)
+                else {}
+            )
 
             if sync_minmax_from_master:
-                minimum = max(0, int(med["min"]))
-                maximum = max(minimum, int(med["max"]))
+
+                minimum = max(
+                    0,
+                    int(med["min"])
+                )
+
+                maximum = max(
+                    minimum,
+                    int(med["max"])
+                )
+
             else:
-                minimum = max(0, int(old.get("min", med["min"])))
-                maximum = max(minimum, int(old.get("max", med["max"])))
+
+                minimum = max(
+                    0,
+                    int(old.get("min", med["min"]))
+                )
+
+                maximum = max(
+                    minimum,
+                    int(old.get("max", med["max"]))
+                )
 
             normalized[rig][med_id] = {
-                "count": max(0, int(old.get("count", 0))),
-                "min": minimum,
-                "max": maximum,
-                "expiry": str(old.get("expiry", default_expiry())),
-                "usage": max(0, int(old.get("usage", 0))),
-                "restocked": max(0, int(old.get("restocked", 0))),
-            }
-    return normalized
 
+                "count":
+                    max(
+                        0,
+                        int(old.get("count", 0))
+                    ),
+
+                "min":
+                    minimum,
+
+                "max":
+                    maximum,
+
+                "expiry":
+                    str(
+                        old.get(
+                            "expiry",
+                            default_expiry()
+                        )
+                    ),
+
+                "usage":
+                    max(
+                        0,
+                        int(old.get("usage", 0))
+                    ),
+
+                "restocked":
+                    max(
+                        0,
+                        int(old.get("restocked", 0))
+                    ),
+            }
+
+    return normalized
 
 def initialize_inventory_state():
     if "inventory" not in st.session_state:
@@ -307,128 +323,276 @@ def medication_master_rows():
 
 
 def apply_medication_master(rows):
-    """Apply validated master rows while preserving existing medication IDs."""
-    global MEDICATIONS, MEDICATION_DEFINITIONS
+def apply_medication_master(rows):
+    """
+    Replace the active medication list with the validated Supabase/master
+    rows. Medication ID remains the permanent key.
+    """
+    global MEDICATIONS
+
     new_meds = {}
-    new_defs = []
+
     for row in rows:
-        med_id = row["medication_id"]
-        name = row["name"]
-        controlled = bool(row["controlled"])
-        minimum = int(row["min"])
-        maximum = int(row["max"])
+        med_id = str(row["medication_id"]).strip()
+
+        if not med_id:
+            continue
+
+        minimum = max(0, int(row["min"]))
+        maximum = max(minimum, int(row["max"]))
+
         new_meds[med_id] = {
             "id": med_id,
-            "name": name,
-            "controlled": controlled,
+            "name": str(row["name"]).strip(),
+            "controlled": bool(row["controlled"]),
             "min": minimum,
             "max": maximum,
         }
-        new_defs.append((med_id, name, controlled, minimum, maximum))
 
-    MEDICATIONS = new_meds
-    MEDICATION_DEFINITIONS = new_defs
+    MEDICATIONS.clear()
+    MEDICATIONS.update(new_meds)
 
+    # The hard-coded definitions are intentionally unused.
+    MEDICATION_DEFINITIONS.clear()
 
 def load_medication_master(force=False):
-    """Load the persistent medication master if the Supabase table exists."""
-    if not supabase_configured() or (st.session_state.get("medication_master_loaded") and not force):
-        return
+    """
+    Load ONLY active medications from Supabase.
+
+    Supabase medication_master is the single source of truth.
+    There is intentionally no fallback to a hard-coded medication list.
+    """
+    if not supabase_configured():
+        st.error(
+            "Supabase is not configured. The medication master cannot be loaded."
+        )
+        return False
+
+    if (
+        st.session_state.get("medication_master_loaded")
+        and not force
+    ):
+        return True
+
     try:
         response = requests.get(
             f"{SUPABASE_URL}/rest/v1/{SUPABASE_MEDICATION_TABLE}",
-            headers={**supabase_headers(), "Accept": "application/json"},
-            params={"select": "medication_id,name,controlled,min,max,active", "order": "medication_id.asc"},
-            timeout=10,
+            headers={
+                **supabase_headers(),
+                "Accept": "application/json",
+            },
+            params={
+                "select": "medication_id,name,controlled,min,max,active",
+                "active": "eq.true",
+                "order": "name.asc",
+            },
+            timeout=15,
         )
+
         response.raise_for_status()
+
         rows = response.json()
+
         if not isinstance(rows, list):
-            raise ValueError("Supabase returned an invalid medication master list.")
+            raise ValueError(
+                "Supabase returned an invalid medication master."
+            )
 
-        active_rows = [
-            row for row in rows
-            if bool(row.get("active", True))
-        ]
-        if active_rows:
-            validated = []
-            seen = set()
-            for row in active_rows:
-                med_id = str(row.get("medication_id", "")).strip()
-                name = str(row.get("name", "")).strip()
-                if not med_id or not name or med_id in seen:
-                    continue
-                minimum = max(0, int(row.get("min", 0)))
-                maximum = max(minimum, int(row.get("max", minimum)))
-                validated.append({
-                    "medication_id": med_id,
-                    "name": name,
-                    "controlled": bool(row.get("controlled", False)),
-                    "min": minimum,
-                    "max": maximum,
-                    "active": True,
-                })
-                seen.add(med_id)
-            if validated:
-                apply_medication_master(validated)
-        else:
-            # First run after the table is created: seed it with the current hard-coded list.
-            save_medication_master_rows(medication_master_rows())
+        validated = []
+        seen = set()
 
-        st.session_state.medication_master_loaded = True
-    except (requests.RequestException, ValueError, TypeError) as exc:
-        # Keep the built-in list working if the table has not been created yet.
-        st.session_state.medication_master_load_error = str(exc)
-
-
-def save_medication_master_rows(rows):
-    """Make the uploaded workbook authoritative for the active medication master."""
-    if not supabase_configured():
-        st.error("Cannot save the medication master list because the Supabase database is not configured.")
-        return False
-    try:
-        headers = {**supabase_headers(), "Accept": "application/json", "Prefer": "return=representation"}
-        # First deactivate every active master record. Historical records remain,
-        # but only the uploaded workbook is active after this operation.
-        deactivate = requests.patch(
-            f"{SUPABASE_URL}/rest/v1/{SUPABASE_MEDICATION_TABLE}",
-            headers=headers, params={"active": "eq.true"}, json={"active": False}, timeout=15
-        )
-        deactivate.raise_for_status()
-
-        authoritative_rows=[]; seen=set()
         for row in rows:
-            med_id=str(row["medication_id"]).strip()
-            if not med_id or med_id in seen: continue
-            seen.add(med_id)
-            authoritative_rows.append({
-                "medication_id": med_id, "name": str(row["name"]).strip(),
-                "controlled": bool(row["controlled"]), "min": max(0,int(row["min"])),
-                "max": max(0,int(row["max"])), "active": bool(row["active"])
+            med_id = str(
+                row.get("medication_id", "")
+            ).strip()
+
+            name = str(
+                row.get("name", "")
+            ).strip()
+
+            if not med_id or not name:
+                continue
+
+            if med_id in seen:
+                continue
+
+            minimum = max(
+                0,
+                int(row.get("min", 0))
+            )
+
+            maximum = max(
+                minimum,
+                int(row.get("max", minimum))
+            )
+
+            validated.append({
+                "medication_id": med_id,
+                "name": name,
+                "controlled": bool(
+                    row.get("controlled", False)
+                ),
+                "min": minimum,
+                "max": maximum,
+                "active": True,
             })
 
-        response=requests.post(
-            f"{SUPABASE_URL}/rest/v1/{SUPABASE_MEDICATION_TABLE}",
-            headers={**supabase_headers(), "Accept":"application/json", "Prefer":"resolution=merge-duplicates,return=representation"},
-            json=authoritative_rows, timeout=15
-        )
-        response.raise_for_status()
+            seen.add(med_id)
 
-        verify=requests.get(
-            f"{SUPABASE_URL}/rest/v1/{SUPABASE_MEDICATION_TABLE}",
-            headers={**supabase_headers(), "Accept":"application/json"},
-            params={"select":"medication_id,name,controlled,min,max,active", "active":"eq.true"}, timeout=15
-        )
-        verify.raise_for_status()
-        actual={str(r.get("medication_id","")).strip() for r in verify.json()}
-        expected={str(r["medication_id"]).strip() for r in authoritative_rows if bool(r["active"])}
-        if actual != expected:
-            raise ValueError(f"Supabase master verification failed. Missing: {sorted(expected-actual)}; Unexpected active IDs: {sorted(actual-expected)}")
+        # Supabase is authoritative.
+        # Even an empty result must replace the current list.
+        apply_medication_master(validated)
+
+        st.session_state.medication_master_loaded = True
+
         return True
-    except (requests.RequestException, ValueError, TypeError) as exc:
-        st.error(f"Unable to save/verify the medication master list in Supabase. Details: {exc}")
+
+    except (
+        requests.RequestException,
+        ValueError,
+        TypeError,
+    ) as exc:
+
+        st.error(
+            "Unable to load the medication master from Supabase. "
+            f"Details: {exc}"
+        )
+
         return False
 
+def save_medication_master_rows(rows):
+    """
+    Save the complete uploaded medication master to Supabase.
+
+    Medications omitted from the uploaded spreadsheet are marked
+    inactive rather than deleted, preserving historical records.
+    """
+    if not supabase_configured():
+        st.error(
+            "Cannot save the medication master list because "
+            "the Supabase database is not configured."
+        )
+        return False
+
+    try:
+        existing_response = requests.get(
+            f"{SUPABASE_URL}/rest/v1/{SUPABASE_MEDICATION_TABLE}",
+            headers={
+                **supabase_headers(),
+                "Accept": "application/json",
+            },
+            params={
+                "select":
+                    "medication_id,name,controlled,min,max,active"
+            },
+            timeout=15,
+        )
+
+        existing_response.raise_for_status()
+
+        existing_rows = existing_response.json()
+
+        if not isinstance(existing_rows, list):
+            raise ValueError(
+                "Supabase returned an invalid existing medication master."
+            )
+
+        uploaded_ids = {
+            str(row["medication_id"]).strip()
+            for row in rows
+        }
+
+        merged = []
+
+        # Add/update everything from the uploaded spreadsheet.
+        for row in rows:
+            merged.append({
+                "medication_id":
+                    str(row["medication_id"]).strip(),
+
+                "name":
+                    str(row["name"]).strip(),
+
+                "controlled":
+                    bool(row["controlled"]),
+
+                "min":
+                    max(0, int(row["min"])),
+
+                "max":
+                    max(
+                        int(row["min"]),
+                        int(row["max"])
+                    ),
+
+                "active":
+                    bool(row["active"]),
+            })
+
+        # Anything that existed previously but is not in the
+        # uploaded spreadsheet becomes inactive.
+        for old in existing_rows:
+
+            old_id = str(
+                old.get("medication_id", "")
+            ).strip()
+
+            if old_id and old_id not in uploaded_ids:
+
+                old_min = max(
+                    0,
+                    int(old.get("min", 0))
+                )
+
+                old_max = max(
+                    old_min,
+                    int(old.get("max", old_min))
+                )
+
+                merged.append({
+                    "medication_id": old_id,
+
+                    "name":
+                        str(old.get("name", old_id)),
+
+                    "controlled":
+                        bool(old.get("controlled", False)),
+
+                    "min": old_min,
+                    "max": old_max,
+
+                    "active": False,
+                })
+
+        response = requests.post(
+            f"{SUPABASE_URL}/rest/v1/{SUPABASE_MEDICATION_TABLE}",
+            headers={
+                **supabase_headers(),
+                "Prefer":
+                    "resolution=merge-duplicates,"
+                    "return=minimal",
+            },
+            json=merged,
+            timeout=15,
+        )
+
+        response.raise_for_status()
+
+        return True
+
+    except (
+        requests.RequestException,
+        ValueError,
+        TypeError,
+    ) as exc:
+
+        st.error(
+            "Unable to save the medication master list to Supabase. "
+            f"Details: {exc}"
+        )
+
+        return False
+        
 def medication_master_excel_bytes():
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill, Alignment
@@ -676,10 +840,44 @@ def is_mobile_device():
 
 if "users" not in st.session_state:
     st.session_state.users = load_users()
-st.session_state.setdefault("current_user", None)
-load_medication_master()
-initialize_inventory_from_supabase()
 
+st.session_state.setdefault(
+    "current_user",
+    None
+)
+
+# ------------------------------------------------------------
+# Load medication master FIRST.
+# Supabase is the single source of truth.
+# ------------------------------------------------------------
+
+if not load_medication_master():
+
+    st.error(
+        "The medication master could not be loaded from Supabase. "
+        "The inventory cannot be started safely."
+    )
+
+    st.stop()
+
+if not MEDICATIONS:
+
+    st.error(
+        "No active medications are currently defined in "
+        "the Supabase medication master. "
+        "Upload and apply your medication master list "
+        "before using inventory."
+    )
+
+    st.stop()
+
+# ------------------------------------------------------------
+# Only after the active medication list is loaded should
+# inventory be initialized.
+# ------------------------------------------------------------
+
+initialize_inventory_from_supabase()
+    
 # ============================================================
 # 4. HELPERS
 # ============================================================
