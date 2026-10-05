@@ -632,16 +632,73 @@ def is_mobile_device():
 
 if "users" not in st.session_state:
     st.session_state.users = load_users()
+
 st.session_state.setdefault("current_user", None)
+st.session_state.setdefault("minmax_unlocked", False)
+
+
+# ============================================================
+# LOGIN MUST HAPPEN BEFORE MEDICATION MASTER VALIDATION
+# ============================================================
+
+if not current_user():
+    with st.sidebar.expander("👤 User Access", expanded=True):
+        login_initials = st.text_input(
+            "Initials",
+            max_chars=5,
+            key="login_initials"
+        ).strip().upper()
+
+        login_pin = st.text_input(
+            "PIN",
+            type="password",
+            key="login_pin"
+        )
+
+        if st.button("🔓 Sign In", key="sign_in"):
+            match = next(
+                (
+                    u for u in st.session_state.users
+                    if u["active"]
+                    and u["initials"].upper() == login_initials
+                    and u["pin_hash"] == hash_pin(login_pin)
+                ),
+                None,
+            )
+
+            if match:
+                st.session_state.current_user = copy.deepcopy(match)
+                st.session_state.minmax_unlocked = False
+                st.rerun()
+            else:
+                st.error("Invalid initials or PIN.")
+
+    st.stop()
+
+
+# ============================================================
+# LOAD MEDICATION MASTER AFTER SUCCESSFUL LOGIN
+# ============================================================
 
 if not load_medication_master():
-    st.error("The medication master could not be loaded from Supabase. The inventory cannot be started safely.")
+    st.error(
+        "The medication master could not be loaded from Supabase. "
+        "The inventory cannot be started safely."
+    )
+
     if st.session_state.get("medication_master_load_error"):
-        st.caption(st.session_state.medication_master_load_error)
+        st.caption(
+            st.session_state["medication_master_load_error"]
+        )
+
     st.stop()
 
 if not MEDICATIONS:
-    st.error("No active medications are defined in the Supabase medication master. Upload and apply the medication master list before using inventory.")
+    st.error(
+        "No active medications are defined in the Supabase "
+        "medication master. Upload and apply the medication "
+        "master list before using inventory."
+    )
     st.stop()
 
 initialize_inventory_from_supabase()
