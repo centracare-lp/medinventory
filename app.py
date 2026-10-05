@@ -13,93 +13,29 @@ st.set_page_config(page_title="Ambulance Medication Inventory", page_icon="💊"
 # ============================================================
 # 1. MASTER MEDICATION DEFINITIONS
 # ============================================================
-# The original file lost this section.  Keep the master list here;
-# inventory for each rig is generated separately below.
-# "controlled" hides the medication from EMT / Basic users.
+# The Supabase medication_master table is the only source of truth.
+# Medication IDs are permanent keys.  The master controls medication
+# name, controlled status, expiration tracking, and active status.
+# Rig-specific Shelf/Bag par levels live in medication_inventory.
 # ============================================================
 
-MEDICATION_DEFINITIONS = [
-    ("adenosine", "Adenosine", False, 0, 5),
-    ("albuterol", "Albuterol", False, 2, 4),
-    ("amiodarone", "Amiodarone", False, 3, 6),
-    ("aspirin", "Aspirin", False, 1, 2),
-    ("atropine", "Atropine", False, 2, 4),
-    ("calcium_chloride", "Calcium Chloride", False, 1, 2),
-    ("dextrose", "Dextrose D10", False, 1, 2),
-    ("dexd50", "Dextrose D50", False, 0, 1),
-    ("diltiazem", "Diltiazem", False, 2, 4),
-    ("diphenhydramine", "Diphenhydramine", False, 2, 6),
-    ("epinephrine_1_1000", "Epinephrine 1 mg/mL (1:1,000)", False, 4, 10),
-    ("epinephrine_1_10000", "Epinephrine 0.1 mg/mL (1:10,000)", False, 2, 6),
-    ("fentanyl", "Fentanyl", True, 2, 6),
-    ("glucagon", "Glucagon", False, 1, 2),
-    ("haloperidol", "Haloperidol", False, 2, 4),
-    ("hydroxocobalamin", "Hydroxocobalamin", False, 0, 1),
-    ("ipratropium", "Ipratropium", False, 2, 6),
-    ("ketamine", "Ketamine", True, 1, 4),
-    ("labetalol", "Labetalol", False, 2, 4),
-    ("lactated_ringers", "Lactated Ringers", False, 2, 6),
-    ("magnesium_sulfate", "Magnesium Sulfate", False, 2, 4),
-    ("methylprednisolone", "Methylprednisolone", False, 2, 4),
-    ("midazolam", "Midazolam", True, 2, 6),
-    ("naloxone", "Naloxone", False, 2, 6),
-    ("nitroglycerin", "Nitroglycerin", False, 2, 10),
-    ("norepinephrine", "Norepinephrine", False, 2, 4),
-    ("ondansetron", "Ondansetron", False, 2, 6),
-    ("oxytocin", "Oxytocin", False, 1, 2),
-    ("procainamide", "Procainamide", False, 1, 2),
-    ("prochlorperazine", "Prochlorperazine", False, 1, 2),
-    ("propofol", "Propofol", True, 1, 2),
-    ("sodium_bicarbonate", "Sodium Bicarbonate", False, 2, 4),
-    ("sterile_water", "Sterile Water", False, 1, 4),
-    ("thiamine", "Thiamine", False, 1, 2),
-    ("tranexamic_acid", "Tranexamic Acid (TXA)", False, 1, 2),
-    ("valproate", "Valproate", False, 1, 2),
-    ("diazepam", "Diazepam (Valium)", True, 1, 4),
-    ("hydromorphone", "Hydromorphone (Dilaudid)", True, 1, 4),
-    ("morphine", "Morphine", True, 1, 4),
-    ("ketorolac", "Ketorolac", False, 2, 6),
-    ("epinephrine_autoinjector", "Epinephrine Auto-Injector", False, 1, 2),
-    ("glucose_gel", "Oral Glucose Gel", False, 1, 4),
-]
-
-MEDICATIONS = {
-    med_id: {
-        "id": med_id,
-        "name": name,
-        "controlled": controlled,
-        "min": minimum,
-        "max": maximum,
-    }
-    for med_id, name, controlled, minimum, maximum in MEDICATION_DEFINITIONS
-}
-
+MEDICATIONS = {}
 RIGS = ["Rig #356", "Rig #357"]
 
 # ============================================================
 # 2. INVENTORY INITIALIZATION
 # ============================================================
-# The missing original inventory foundation caused the KeyError.
-# New installations start with zero stock so nobody accidentally
-# assumes a quantity that has not been verified.  Expiration defaults
-# to one year from today and can be replaced in the grid/restock form.
-# ============================================================
-
-def default_expiry():
-    return (datetime.date.today() + datetime.timedelta(days=365)).isoformat()
-
 
 def build_empty_inventory():
     return {
         med_id: {
-            "count": 0,
-            "min": med["min"],
-            "max": med["max"],
-            "expiry": default_expiry(),
-            "usage": 0,
-            "restocked": 0,
+            "shelf_count": 0,
+            "bag_count": 0,
+            "shelf_par": 0,
+            "bag_par": 0,
+            "expiry": None,
         }
-        for med_id, med in MEDICATIONS.items()
+        for med_id in MEDICATIONS
     }
 
 
@@ -108,24 +44,23 @@ def build_initial_inventory():
 
 
 def purge_inactive_inventory(data):
-    """Keep only medication IDs in the current active master list."""
+    """Keep only active medication IDs while preserving historical inventory data."""
     if not isinstance(data, dict):
         return {}
     active_ids = set(MEDICATIONS.keys())
     cleaned = {}
-    for rig, rig_data in data.items():
-        if not isinstance(rig_data, dict):
-            continue
+    for rig in RIGS:
+        rig_data = data.get(rig, {})
         cleaned[rig] = {
             med_id: record
             for med_id, record in rig_data.items()
             if med_id in active_ids
-        }
+        } if isinstance(rig_data, dict) else {}
     return cleaned
 
 
-def normalize_inventory(data, sync_minmax_from_master=False):
-    """Repair inventory records while preserving counts/expiry and optionally syncing master Min/Max."""
+def normalize_inventory(data):
+    """Normalize rig-specific Shelf/Bag counts and par levels without inventing expirations."""
     if not isinstance(data, dict):
         data = {}
     normalized = {}
@@ -134,21 +69,15 @@ def normalize_inventory(data, sync_minmax_from_master=False):
         normalized[rig] = {}
         for med_id, med in MEDICATIONS.items():
             old = source.get(med_id, {}) if isinstance(source, dict) else {}
-
-            if sync_minmax_from_master:
-                minimum = max(0, int(med["min"]))
-                maximum = max(minimum, int(med["max"]))
-            else:
-                minimum = max(0, int(old.get("min", med["min"])))
-                maximum = max(minimum, int(old.get("max", med["max"])))
-
+            expiry = old.get("expiry")
+            if expiry in ("", "None", "null"):
+                expiry = None
             normalized[rig][med_id] = {
-                "count": max(0, int(old.get("count", 0))),
-                "min": minimum,
-                "max": maximum,
-                "expiry": str(old.get("expiry", default_expiry())),
-                "usage": max(0, int(old.get("usage", 0))),
-                "restocked": max(0, int(old.get("restocked", 0))),
+                "shelf_count": max(0, int(old.get("shelf_count", old.get("count", 0)) or 0)),
+                "bag_count": max(0, int(old.get("bag_count", 0) or 0)),
+                "shelf_par": max(0, int(old.get("shelf_par", old.get("max", 0)) or 0)),
+                "bag_par": max(0, int(old.get("bag_par", 0) or 0)),
+                "expiry": str(expiry) if expiry else None,
             }
     return normalized
 
@@ -162,7 +91,8 @@ def initialize_inventory_state():
     st.session_state.setdefault("shift_usage", {})
     st.session_state.setdefault("shift_restock", {})
     st.session_state.setdefault("activity_log", [])
-    st.session_state.setdefault("minmax_unlocked", False)
+    st.session_state.setdefault("par_unlocked", False)
+    st.session_state.setdefault("usage_history", [])
 
 
 # ============================================================
@@ -196,7 +126,7 @@ SUPABASE_URL, SUPABASE_URL_ERROR = validate_supabase_url(SUPABASE_URL)
 
 PERMISSION_LABELS = {
     "manage_users": "Manage users",
-    "manage_minmax": "Manage medication Min/Max",
+    "manage_minmax": "Manage medication par levels",
     "edit_inventory": "Edit inventory",
     "record_usage": "Record medication usage",
     "record_restock": "Record medication restock",
@@ -298,8 +228,7 @@ def medication_master_rows():
             "medication_id": med_id,
             "name": med["name"],
             "controlled": bool(med["controlled"]),
-            "min": int(med["min"]),
-            "max": int(med["max"]),
+            "track_expiration": bool(med.get("track_expiration", False)),
             "active": True,
         }
         for med_id, med in MEDICATIONS.items()
@@ -307,38 +236,35 @@ def medication_master_rows():
 
 
 def apply_medication_master(rows):
-    """Apply validated master rows while preserving existing medication IDs."""
-    global MEDICATIONS, MEDICATION_DEFINITIONS
+    """Replace the in-memory medication master with validated active Supabase rows."""
+    global MEDICATIONS
     new_meds = {}
-    new_defs = []
     for row in rows:
-        med_id = row["medication_id"]
-        name = row["name"]
-        controlled = bool(row["controlled"])
-        minimum = int(row["min"])
-        maximum = int(row["max"])
+        med_id = str(row["medication_id"]).strip()
         new_meds[med_id] = {
             "id": med_id,
-            "name": name,
-            "controlled": controlled,
-            "min": minimum,
-            "max": maximum,
+            "name": str(row["name"]).strip(),
+            "controlled": bool(row.get("controlled", False)),
+            "track_expiration": bool(row.get("track_expiration", False)),
         }
-        new_defs.append((med_id, name, controlled, minimum, maximum))
-
     MEDICATIONS = new_meds
-    MEDICATION_DEFINITIONS = new_defs
 
 
 def load_medication_master(force=False):
-    """Load the persistent medication master if the Supabase table exists."""
-    if not supabase_configured() or (st.session_state.get("medication_master_loaded") and not force):
-        return
+    """Load the medication master strictly from Supabase."""
+    if not supabase_configured():
+        st.session_state.medication_master_load_error = "Supabase is not configured."
+        return False
+    if st.session_state.get("medication_master_loaded") and not force:
+        return bool(MEDICATIONS)
     try:
         response = requests.get(
             f"{SUPABASE_URL}/rest/v1/{SUPABASE_MEDICATION_TABLE}",
             headers={**supabase_headers(), "Accept": "application/json"},
-            params={"select": "medication_id,name,controlled,min,max,active", "order": "medication_id.asc"},
+            params={
+                "select": "medication_id,name,controlled,track_expiration,active",
+                "order": "medication_id.asc",
+            },
             timeout=10,
         )
         response.raise_for_status()
@@ -346,88 +272,83 @@ def load_medication_master(force=False):
         if not isinstance(rows, list):
             raise ValueError("Supabase returned an invalid medication master list.")
 
-        active_rows = [
-            row for row in rows
-            if bool(row.get("active", True))
-        ]
-        if active_rows:
-            validated = []
-            seen = set()
-            for row in active_rows:
-                med_id = str(row.get("medication_id", "")).strip()
-                name = str(row.get("name", "")).strip()
-                if not med_id or not name or med_id in seen:
-                    continue
-                minimum = max(0, int(row.get("min", 0)))
-                maximum = max(minimum, int(row.get("max", minimum)))
-                validated.append({
-                    "medication_id": med_id,
-                    "name": name,
-                    "controlled": bool(row.get("controlled", False)),
-                    "min": minimum,
-                    "max": maximum,
-                    "active": True,
-                })
-                seen.add(med_id)
-            if validated:
-                apply_medication_master(validated)
-        else:
-            # First run after the table is created: seed it with the current hard-coded list.
-            save_medication_master_rows(medication_master_rows())
+        validated = []
+        seen = set()
+        for row in rows:
+            if not bool(row.get("active", True)):
+                continue
+            med_id = str(row.get("medication_id", "")).strip()
+            name = str(row.get("name", "")).strip()
+            if not med_id or not name or med_id in seen:
+                continue
+            validated.append({
+                "medication_id": med_id,
+                "name": name,
+                "controlled": bool(row.get("controlled", False)),
+                "track_expiration": bool(row.get("track_expiration", False)),
+                "active": True,
+            })
+            seen.add(med_id)
 
+        apply_medication_master(validated)
         st.session_state.medication_master_loaded = True
+        st.session_state.medication_master_load_error = ""
+        return bool(validated)
     except (requests.RequestException, ValueError, TypeError) as exc:
-        # Keep the built-in list working if the table has not been created yet.
         st.session_state.medication_master_load_error = str(exc)
+        return False
 
 
 def save_medication_master_rows(rows):
-    """Make the uploaded workbook authoritative for the active medication master."""
+    """Upsert the complete medication master and deactivate omitted IDs."""
     if not supabase_configured():
         st.error("Cannot save the medication master list because the Supabase database is not configured.")
         return False
     try:
-        headers = {**supabase_headers(), "Accept": "application/json", "Prefer": "return=representation"}
-        # First deactivate every active master record. Historical records remain,
-        # but only the uploaded workbook is active after this operation.
-        deactivate = requests.patch(
+        existing_response = requests.get(
             f"{SUPABASE_URL}/rest/v1/{SUPABASE_MEDICATION_TABLE}",
-            headers=headers, params={"active": "eq.true"}, json={"active": False}, timeout=15
+            headers={**supabase_headers(), "Accept": "application/json"},
+            params={"select": "medication_id,name,controlled,track_expiration,active"},
+            timeout=10,
         )
-        deactivate.raise_for_status()
+        existing_response.raise_for_status()
+        existing_rows = existing_response.json()
+        if not isinstance(existing_rows, list):
+            raise ValueError("Supabase returned an invalid existing medication master.")
 
-        authoritative_rows=[]; seen=set()
+        uploaded_ids = {str(row["medication_id"]).strip() for row in rows}
+        merged = []
         for row in rows:
-            med_id=str(row["medication_id"]).strip()
-            if not med_id or med_id in seen: continue
-            seen.add(med_id)
-            authoritative_rows.append({
-                "medication_id": med_id, "name": str(row["name"]).strip(),
-                "controlled": bool(row["controlled"]), "min": max(0,int(row["min"])),
-                "max": max(0,int(row["max"])), "active": bool(row["active"])
+            merged.append({
+                "medication_id": str(row["medication_id"]).strip(),
+                "name": str(row["name"]).strip(),
+                "controlled": bool(row["controlled"]),
+                "track_expiration": bool(row.get("track_expiration", False)),
+                "active": bool(row["active"]),
             })
+        for old in existing_rows:
+            old_id = str(old.get("medication_id", "")).strip()
+            if old_id and old_id not in uploaded_ids:
+                merged.append({
+                    "medication_id": old_id,
+                    "name": str(old.get("name", old_id)),
+                    "controlled": bool(old.get("controlled", False)),
+                    "track_expiration": bool(old.get("track_expiration", False)),
+                    "active": False,
+                })
 
-        response=requests.post(
+        response = requests.post(
             f"{SUPABASE_URL}/rest/v1/{SUPABASE_MEDICATION_TABLE}",
-            headers={**supabase_headers(), "Accept":"application/json", "Prefer":"resolution=merge-duplicates,return=representation"},
-            json=authoritative_rows, timeout=15
+            headers={**supabase_headers(), "Prefer": "resolution=merge-duplicates,return=representation"},
+            json=merged,
+            timeout=15,
         )
         response.raise_for_status()
-
-        verify=requests.get(
-            f"{SUPABASE_URL}/rest/v1/{SUPABASE_MEDICATION_TABLE}",
-            headers={**supabase_headers(), "Accept":"application/json"},
-            params={"select":"medication_id,name,controlled,min,max,active", "active":"eq.true"}, timeout=15
-        )
-        verify.raise_for_status()
-        actual={str(r.get("medication_id","")).strip() for r in verify.json()}
-        expected={str(r["medication_id"]).strip() for r in authoritative_rows if bool(r["active"])}
-        if actual != expected:
-            raise ValueError(f"Supabase master verification failed. Missing: {sorted(expected-actual)}; Unexpected active IDs: {sorted(actual-expected)}")
         return True
     except (requests.RequestException, ValueError, TypeError) as exc:
-        st.error(f"Unable to save/verify the medication master list in Supabase. Details: {exc}")
+        st.error(f"Unable to save the medication master list to Supabase. Details: {exc}")
         return False
+
 
 def medication_master_excel_bytes():
     from openpyxl import Workbook
@@ -436,12 +357,12 @@ def medication_master_excel_bytes():
     wb = Workbook()
     ws = wb.active
     ws.title = "Medications"
-    headers = ["Medication ID", "Medication Name", "Controlled", "Min", "Max", "Active"]
+    headers = ["Medication ID", "Medication Name", "Controlled", "Track Expiration", "Active"]
     ws.append(headers)
     for row in medication_master_rows():
         ws.append([
             row["medication_id"], row["name"], row["controlled"],
-            row["min"], row["max"], row["active"],
+            row["track_expiration"], row["active"],
         ])
 
     for cell in ws[1]:
@@ -449,7 +370,7 @@ def medication_master_excel_bytes():
         cell.fill = PatternFill(fill_type="solid", fgColor="D9EAF7")
         cell.alignment = Alignment(horizontal="center")
     ws.freeze_panes = "A2"
-    widths = {"A": 28, "B": 38, "C": 14, "D": 10, "E": 10, "F": 10}
+    widths = {"A": 28, "B": 42, "C": 14, "D": 20, "E": 10}
     for col, width in widths.items():
         ws.column_dimensions[col].width = width
 
@@ -460,13 +381,14 @@ def medication_master_excel_bytes():
         ["Medication ID is the permanent key. Do not change an existing ID if you want to preserve inventory."],
         ["Medication Name can be corrected or updated."],
         ["Controlled: TRUE hides the medication from EMT / Basic users; FALSE makes it visible."],
-        ["Min and Max are the default inventory levels for a new medication. Existing rig Min/Max values are preserved."],
-        ["Active: TRUE keeps the medication in the master list. FALSE removes it from the active list without deleting its historical inventory rows."],
+        ["Track Expiration: TRUE requires expiration tracking. Enter expiration as MM/YY in the app; the system stores the last day of that month."],
+        ["Active: TRUE keeps the medication in the active list. FALSE removes it from the active list without deleting its historical inventory rows."],
+        ["Shelf/Bag par levels are configured separately for each rig and are not part of this master list."],
         ["To add a medication, use a new unique Medication ID."],
     ]
     for row in instructions:
         info.append(row)
-    info.column_dimensions["A"].width = 115
+    info.column_dimensions["A"].width = 120
     info["A1"].font = Font(bold=True, size=14)
     info.freeze_panes = "A2"
 
@@ -490,22 +412,31 @@ def validate_medication_master_upload(uploaded_file):
             return [], ["The Medications sheet is empty."]
 
         headers = [str(v).strip() if v is not None else "" for v in rows[0]]
-        required = ["Medication ID", "Medication Name", "Controlled", "Min", "Max", "Active"]
+        required = ["Medication ID", "Medication Name", "Controlled", "Track Expiration", "Active"]
         if headers[:len(required)] != required:
-            return [], ["The first six columns must be: Medication ID, Medication Name, Controlled, Min, Max, Active."]
+            return [], ["The first five columns must be: Medication ID, Medication Name, Controlled, Track Expiration, Active."]
 
-        errors = []
-        cleaned = []
-        seen = set()
+        errors, cleaned, seen = [], [], set()
+
+        def parse_bool(value, field, excel_row):
+            if isinstance(value, bool):
+                return value
+            text = str(value).strip().lower()
+            if text in {"true", "yes", "y", "1"}:
+                return True
+            if text in {"false", "no", "n", "0"}:
+                return False
+            errors.append(f"Row {excel_row}: {field} must be TRUE or FALSE.")
+            return False
+
         for excel_row, values in enumerate(rows[1:], start=2):
             if all(v is None or str(v).strip() == "" for v in values):
                 continue
             med_id = str(values[0]).strip() if len(values) > 0 and values[0] is not None else ""
             name = str(values[1]).strip() if len(values) > 1 and values[1] is not None else ""
             controlled_raw = values[2] if len(values) > 2 else None
-            minimum_raw = values[3] if len(values) > 3 else None
-            maximum_raw = values[4] if len(values) > 4 else None
-            active_raw = values[5] if len(values) > 5 else None
+            expiration_raw = values[3] if len(values) > 3 else None
+            active_raw = values[4] if len(values) > 4 else None
 
             if not med_id:
                 errors.append(f"Row {excel_row}: Medication ID is required.")
@@ -514,35 +445,9 @@ def validate_medication_master_upload(uploaded_file):
             if not name:
                 errors.append(f"Row {excel_row}: Medication Name is required.")
 
-            def parse_bool(value, field):
-                if isinstance(value, bool):
-                    return value
-                text = str(value).strip().lower()
-                if text in {"true", "yes", "y", "1"}:
-                    return True
-                if text in {"false", "no", "n", "0"}:
-                    return False
-                errors.append(f"Row {excel_row}: {field} must be TRUE or FALSE.")
-                return False
-
-            controlled = parse_bool(controlled_raw, "Controlled")
-            active = parse_bool(active_raw, "Active")
-            try:
-                minimum = int(minimum_raw)
-                if minimum < 0:
-                    raise ValueError
-            except (TypeError, ValueError):
-                errors.append(f"Row {excel_row}: Min must be a whole number >= 0.")
-                minimum = 0
-            try:
-                maximum = int(maximum_raw)
-                if maximum < 0:
-                    raise ValueError
-            except (TypeError, ValueError):
-                errors.append(f"Row {excel_row}: Max must be a whole number >= 0.")
-                maximum = 0
-            if maximum < minimum:
-                errors.append(f"Row {excel_row}: Max cannot be less than Min.")
+            controlled = parse_bool(controlled_raw, "Controlled", excel_row)
+            track_expiration = parse_bool(expiration_raw, "Track Expiration", excel_row)
+            active = parse_bool(active_raw, "Active", excel_row)
 
             if med_id:
                 seen.add(med_id)
@@ -550,8 +455,7 @@ def validate_medication_master_upload(uploaded_file):
                 "medication_id": med_id,
                 "name": name,
                 "controlled": controlled,
-                "min": minimum,
-                "max": max(minimum, maximum),
+                "track_expiration": track_expiration,
                 "active": active,
             })
 
@@ -570,12 +474,11 @@ def inventory_rows_from_state():
             rows.append({
                 "rig": rig,
                 "medication_id": med_id,
-                "count": int(item.get("count", 0)),
-                "min": int(item.get("min", MEDICATIONS[med_id]["min"])),
-                "max": int(item.get("max", MEDICATIONS[med_id]["max"])),
-                "expiry": str(item.get("expiry", default_expiry())),
-                "usage": int(item.get("usage", 0)),
-                "restocked": int(item.get("restocked", 0)),
+                "shelf_count": int(item.get("shelf_count", 0)),
+                "bag_count": int(item.get("bag_count", 0)),
+                "shelf_par": int(item.get("shelf_par", 0)),
+                "bag_par": int(item.get("bag_par", 0)),
+                "expiry": item.get("expiry"),
             })
     return rows
 
@@ -603,12 +506,11 @@ def save_inventory_item(rig, med_id):
     row = {
         "rig": rig,
         "medication_id": med_id,
-        "count": int(item["count"]),
-        "min": int(item["min"]),
-        "max": int(item["max"]),
-        "expiry": str(item["expiry"]),
-        "usage": int(item.get("usage", 0)),
-        "restocked": int(item.get("restocked", 0)),
+        "shelf_count": int(item["shelf_count"]),
+        "bag_count": int(item["bag_count"]),
+        "shelf_par": int(item["shelf_par"]),
+        "bag_par": int(item["bag_par"]),
+        "expiry": item.get("expiry"),
     }
     return save_inventory_rows([row])
 
@@ -616,12 +518,14 @@ def save_inventory_item(rig, med_id):
 def initialize_inventory_from_supabase():
     initialize_inventory_state()
     if not supabase_configured() or st.session_state.get("inventory_loaded_from_supabase"):
-        return
+        return True
     try:
         response = requests.get(
             f"{SUPABASE_URL}/rest/v1/{SUPABASE_INVENTORY_TABLE}",
             headers={**supabase_headers(), "Accept": "application/json"},
-            params={"select": "rig,medication_id,count,min,max,expiry,usage,restocked"},
+            params={
+                "select": "rig,medication_id,shelf_count,bag_count,shelf_par,bag_par,expiry",
+            },
             timeout=10,
         )
         response.raise_for_status()
@@ -629,27 +533,79 @@ def initialize_inventory_from_supabase():
         if not isinstance(rows, list):
             raise ValueError("Supabase returned an invalid inventory database.")
 
-        if rows:
-            for row in rows:
-                rig = row.get("rig")
-                med_id = row.get("medication_id")
-                if rig in RIGS and med_id in MEDICATIONS:
-                    st.session_state.inventory[rig][med_id] = {
-                        "count": max(0, int(row.get("count", 0))),
-                        "min": max(0, int(row.get("min", MEDICATIONS[med_id]["min"]))),
-                        "max": max(0, int(row.get("max", MEDICATIONS[med_id]["max"]))),
-                        "expiry": str(row.get("expiry") or default_expiry()),
-                        "usage": max(0, int(row.get("usage", 0))),
-                        "restocked": max(0, int(row.get("restocked", 0))),
-                    }
-            st.session_state.inventory = normalize_inventory(st.session_state.inventory)
-        else:
-            # First run: create a complete inventory table using the app's safe zero-stock defaults.
-            save_inventory_rows(inventory_rows_from_state())
+        for row in rows:
+            rig = row.get("rig")
+            med_id = row.get("medication_id")
+            if rig in RIGS and med_id in MEDICATIONS:
+                expiry = row.get("expiry")
+                if expiry in ("", "None", "null"):
+                    expiry = None
+                st.session_state.inventory[rig][med_id] = {
+                    "shelf_count": max(0, int(row.get("shelf_count", 0) or 0)),
+                    "bag_count": max(0, int(row.get("bag_count", 0) or 0)),
+                    "shelf_par": max(0, int(row.get("shelf_par", 0) or 0)),
+                    "bag_par": max(0, int(row.get("bag_par", 0) or 0)),
+                    "expiry": str(expiry) if expiry else None,
+                }
 
+        st.session_state.inventory = normalize_inventory(st.session_state.inventory)
+        if not rows:
+            save_inventory_rows(inventory_rows_from_state())
         st.session_state.inventory_loaded_from_supabase = True
+        return True
     except (requests.RequestException, ValueError, TypeError) as exc:
         st.error(f"Unable to load medication inventory from Supabase. Details: {exc}")
+        return False
+
+
+def save_usage_history(rig, med_id, location, quantity):
+    if not supabase_configured():
+        st.error("Cannot save usage history because the Supabase database is not configured.")
+        return False
+    row = {
+        "rig": rig,
+        "medication_id": med_id,
+        "location": location,
+        "quantity": int(quantity),
+        "user_initials": (current_user() or {}).get("initials", "SYSTEM"),
+    }
+    try:
+        response = requests.post(
+            f"{SUPABASE_URL}/rest/v1/medication_usage",
+            headers={**supabase_headers(), "Prefer": "return=minimal"},
+            json=[row],
+            timeout=10,
+        )
+        response.raise_for_status()
+        return True
+    except requests.RequestException as exc:
+        st.error(f"Unable to save medication usage history. Details: {exc}")
+        return False
+
+
+def load_usage_history(rig):
+    if not supabase_configured():
+        return []
+    try:
+        response = requests.get(
+            f"{SUPABASE_URL}/rest/v1/medication_usage",
+            headers={**supabase_headers(), "Accept": "application/json"},
+            params={
+                "select": "id,used_at,rig,medication_id,location,quantity,user_initials",
+                "rig": f"eq.{rig}",
+                "order": "used_at.desc",
+                "limit": "100",
+            },
+            timeout=10,
+        )
+        response.raise_for_status()
+        rows = response.json()
+        if not isinstance(rows, list):
+            raise ValueError("Supabase returned an invalid usage history.")
+        return rows
+    except (requests.RequestException, ValueError, TypeError) as exc:
+        st.session_state.usage_history_load_error = str(exc)
+        return []
 
 
 def current_user():
@@ -677,7 +633,17 @@ def is_mobile_device():
 if "users" not in st.session_state:
     st.session_state.users = load_users()
 st.session_state.setdefault("current_user", None)
-load_medication_master()
+
+if not load_medication_master():
+    st.error("The medication master could not be loaded from Supabase. The inventory cannot be started safely.")
+    if st.session_state.get("medication_master_load_error"):
+        st.caption(st.session_state.medication_master_load_error)
+    st.stop()
+
+if not MEDICATIONS:
+    st.error("No active medications are defined in the Supabase medication master. Upload and apply the medication master list before using inventory.")
+    st.stop()
+
 initialize_inventory_from_supabase()
 
 # ============================================================
@@ -685,7 +651,7 @@ initialize_inventory_from_supabase()
 # ============================================================
 
 def visible_med_ids(rig, role):
-    del rig  # reserved for future rig-specific medication rules
+    del rig
     return [
         med_id for med_id, med in MEDICATIONS.items()
         if role == "Paramedic" or not med["controlled"]
@@ -697,16 +663,18 @@ def build_visible_medication_list(rig, role):
         {
             "id": med_id,
             "name": MEDICATIONS[med_id]["name"],
-            "min": st.session_state.inventory[rig][med_id]["min"],
-            "max": st.session_state.inventory[rig][med_id]["max"],
-            "count": st.session_state.inventory[rig][med_id]["count"],
+            "shelf_count": st.session_state.inventory[rig][med_id]["shelf_count"],
+            "bag_count": st.session_state.inventory[rig][med_id]["bag_count"],
+            "shelf_par": st.session_state.inventory[rig][med_id]["shelf_par"],
+            "bag_par": st.session_state.inventory[rig][med_id]["bag_par"],
             "expiry": st.session_state.inventory[rig][med_id]["expiry"],
+            "track_expiration": MEDICATIONS[med_id].get("track_expiration", False),
         }
         for med_id in visible_med_ids(rig, role)
     ]
 
 
-def record_activity(rig, med_id, action, quantity, expiration=None):
+def record_activity(rig, med_id, action, quantity, location=None, expiration=None):
     event = {
         "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "user": (current_user() or {}).get("initials", "SYSTEM"),
@@ -716,24 +684,49 @@ def record_activity(rig, med_id, action, quantity, expiration=None):
         "action": action,
         "quantity": int(quantity),
     }
+    if location:
+        event["location"] = location
     if expiration:
         event["expiration"] = expiration
     st.session_state.activity_log.append(event)
 
 
-def get_status(item):
-    count = int(item.get("count", 0))
-    minimum = int(item.get("min", 0))
+def total_current(item):
+    return int(item.get("shelf_count", 0)) + int(item.get("bag_count", 0))
+
+
+def total_par(item):
+    return int(item.get("shelf_par", 0)) + int(item.get("bag_par", 0))
+
+
+def location_status(count, par):
+    count, par = int(count), int(par)
+    if par <= 0:
+        return "PAR NOT SET"
     if count == 0:
         return "OUT OF STOCK"
-    if count <= minimum:
-        return "AT / BELOW MIN"
+    if count < par:
+        return "BELOW PAR"
     return "OK"
 
 
-def shift_totals(rig, med_id, action):
+def get_status(item):
+    shelf_status = location_status(item.get("shelf_count", 0), item.get("shelf_par", 0))
+    bag_status = location_status(item.get("bag_count", 0), item.get("bag_par", 0))
+    if shelf_status == "OUT OF STOCK" and int(item.get("shelf_par", 0)) > 0:
+        return "SHELF EMPTY"
+    if bag_status == "OUT OF STOCK" and int(item.get("bag_par", 0)) > 0:
+        return "BAG EMPTY"
+    if shelf_status == "BELOW PAR" or bag_status == "BELOW PAR":
+        return "BELOW PAR"
+    if shelf_status in {"PAR NOT SET"} or bag_status in {"PAR NOT SET"}:
+        return "PAR NOT SET"
+    return "OK"
+
+
+def shift_totals(rig, med_id, action, location=None):
     store = st.session_state.shift_usage if action == "usage" else st.session_state.shift_restock
-    return store.get((rig, med_id), 0)
+    return store.get((rig, med_id, location), 0) if location else store.get((rig, med_id), 0)
 
 
 def build_shift_summary(rig, role):
@@ -745,20 +738,25 @@ def build_shift_summary(rig, role):
         f"Certification view: {role}",
         "",
         "CURRENT INVENTORY",
-        "Medication | Current | Min | Max | Expiration | Status",
-        "-" * 90,
+        "Medication | Shelf | Shelf Par | Bag | Bag Par | Total | Total Par | Expiration | Status",
+        "-" * 135,
     ]
     for med_id in ids:
         item = inventory[med_id]
+        expiry = item.get("expiry") or "N/A"
         lines.append(
-            f"{MEDICATIONS[med_id]['name']} | {item['count']} | {item['min']} | {item['max']} | {item['expiry']} | {get_status(item)}"
+            f"{MEDICATIONS[med_id]['name']} | {item['shelf_count']} | {item['shelf_par']} | "
+            f"{item['bag_count']} | {item['bag_par']} | {total_current(item)} | {total_par(item)} | "
+            f"{expiry} | {get_status(item)}"
         )
     lines.extend(["", "SHIFT ACTIVITY"])
     activity = [e for e in st.session_state.activity_log if e["rig"] == rig]
     if activity:
         for event in reversed(activity[-50:]):
+            location = f" | {event.get('location')}" if event.get("location") else ""
             lines.append(
-                f"{event['timestamp']} | {event['user']} | {event['action'].upper()} | {event['medication']} | {event['quantity']}"
+                f"{event['timestamp']} | {event['user']} | {event['action'].upper()} | "
+                f"{event['medication']} | {event['quantity']}{location}"
             )
     else:
         lines.append("No usage or restock activity recorded.")
@@ -770,6 +768,48 @@ def parse_date(value):
         return datetime.datetime.strptime(str(value), "%Y-%m-%d").date()
     except (TypeError, ValueError):
         return None
+
+
+def parse_expiration_mm_yy(value):
+    """Convert MM/YY to the last calendar day of that month."""
+    text = str(value or "").strip()
+    try:
+        month_text, year_text = text.split("/")
+        month = int(month_text)
+        year_short = int(year_text)
+        if not 1 <= month <= 12 or not 0 <= year_short <= 99:
+            return None
+        year = 2000 + year_short
+        if month == 12:
+            next_month = datetime.date(year + 1, 1, 1)
+        else:
+            next_month = datetime.date(year, month + 1, 1)
+        return next_month - datetime.timedelta(days=1)
+    except (TypeError, ValueError):
+        return None
+
+
+def format_expiration(expiry):
+    date_value = parse_date(expiry)
+    return date_value.strftime("%m/%y") if date_value else ""
+
+
+def expiration_for_display(med_id, expiry):
+    if not MEDICATIONS[med_id].get("track_expiration", False):
+        return "Not tracked"
+    return format_expiration(expiry) or "Not entered"
+
+
+def save_usage_and_inventory(rig, med_id, location, quantity, old_item):
+    """Persist inventory and usage history, rolling inventory back if history fails."""
+    if not save_inventory_item(rig, med_id):
+        return False
+    if save_usage_history(rig, med_id, location, quantity):
+        return True
+
+    st.session_state.inventory[rig][med_id] = copy.deepcopy(old_item)
+    save_inventory_item(rig, med_id)
+    return False
 
 
 # ============================================================
@@ -810,7 +850,7 @@ if not current_user():
                 )
                 if match:
                     st.session_state.current_user = copy.deepcopy(match)
-                    st.session_state.minmax_unlocked = False
+                    st.session_state.par_unlocked = False
                     st.rerun()
                 else:
                     st.error("Invalid initials or PIN.")
@@ -825,7 +865,7 @@ with st.sidebar.expander("👤 User Access", expanded=True):
     st.success(f"Signed in: {user['name']} ({user['initials']})")
     if st.button("🔒 Sign Out", key="sign_out", use_container_width=True):
         st.session_state.current_user = None
-        st.session_state.minmax_unlocked = False
+        st.session_state.par_unlocked = False
         st.rerun()
 
     if has_permission("manage_users"):
@@ -955,6 +995,7 @@ with st.sidebar.expander("👤 User Access", expanded=True):
 if has_permission("manage_minmax"):
     with st.sidebar.expander("💊 Medication Master List", expanded=False):
         st.caption("Export the current medication list, edit it in Excel, then upload it back here.")
+        st.caption("Shelf/Bag par levels are configured per rig in the inventory grid.")
         if supabase_configured():
             st.caption("🟢 Supabase connection configured.")
         else:
@@ -997,71 +1038,34 @@ if has_permission("manage_minmax"):
                         "Their existing inventory rows will be preserved."
                     )
 
-        # Keep Apply outside the uploader's conditional block. Streamlit can rebuild
-        # the uploader on a form submit; the validated rows are safely retained in
-        # session state and the Apply button therefore remains available.
         validated_rows = st.session_state.get("validated_medication_master")
         if validated_rows:
             st.divider()
             st.write("### Ready to Apply")
-            st.caption(
-                "The spreadsheet has passed validation. Click Apply to save the "
-                "master list to Supabase and synchronize inventory."
-            )
-
+            st.caption("The spreadsheet has passed validation. Applying it updates only the medication master; existing Shelf/Bag counts and par levels remain with their medication IDs.")
             with st.form("apply_medication_master_form", clear_on_submit=False):
                 apply_clicked = st.form_submit_button(
-                    "✅ Apply Medication List",
-                    type="primary",
-                    use_container_width=True,
+                    "✅ Apply Medication List", type="primary", use_container_width=True
                 )
-
             if apply_clicked:
                 rows_to_apply = st.session_state.get("validated_medication_master") or []
-                st.info("Apply button received. Saving medication master list...")
-
                 with st.spinner("Applying medication master list..."):
-                    master_saved = save_medication_master_rows(rows_to_apply)
-
-                    if master_saved:
-                        active_rows = [r for r in rows_to_apply if r["active"]]
-                        apply_medication_master(active_rows)
-
-                        # Preserve count/expiry/usage/restock for matching IDs, but make
-                        # the uploaded master Min/Max authoritative for every active med.
-                        st.session_state.inventory = purge_inactive_inventory(
-                            normalize_inventory(
-                                st.session_state.inventory,
-                                sync_minmax_from_master=True,
-                            )
-                        )
-
-                        inventory_saved = save_inventory_rows(
-                            inventory_rows_from_state()
-                        )
-
-                        if inventory_saved:
-                            st.session_state.medication_master_loaded = True
-                            load_medication_master(force=True)
+                    if save_medication_master_rows(rows_to_apply):
+                        if load_medication_master(force=True):
                             st.session_state.inventory = purge_inactive_inventory(
-                                normalize_inventory(st.session_state.inventory, sync_minmax_from_master=True)
+                                normalize_inventory(st.session_state.inventory)
                             )
-                            st.success(
-                                f"✅ Medication master list applied successfully. "
-                                f"{len(MEDICATIONS)} active medications are now in the system."
-                            )
-                            st.info(
-                                "The active medication list, Min/Max values, and inventory "
-                                "records have been synchronized with the uploaded master."
-                            )
-                            # Keep the validated list available for this render so the
-                            # success state is visible. Clear it after the next rerun.
-                            st.session_state.pop("validated_medication_master", None)
+                            inventory_saved = save_inventory_rows(inventory_rows_from_state())
+                            if inventory_saved:
+                                st.success(
+                                    f"✅ Medication master applied. {len(MEDICATIONS)} active medications are now in the system."
+                                )
+                                st.session_state.pop("validated_medication_master", None)
+                                st.rerun()
+                            else:
+                                st.error("The medication master was saved, but inventory synchronization failed.")
                         else:
-                            st.error(
-                                "The medication master list was saved, but the inventory "
-                                "synchronization failed. Existing inventory was not deleted."
-                            )
+                            st.error("The medication master was saved, but it could not be reloaded from Supabase.")
 
 
 # ============================================================
@@ -1071,7 +1075,7 @@ if has_permission("manage_minmax"):
 mobile_device = is_mobile_device()
 
 st.title("💊 Ambulance Medication Inventory")
-st.caption("Operational medication inventory, usage, restocking, Min/Max controls, expiration tracking, and shift summaries.")
+st.caption("Rig-specific Shelf/Bag inventory, par levels, usage, restocking, expiration tracking, and shift summaries.")
 
 if mobile_device:
     st.info("📱 Mobile mode — simplified for quick use on a phone.")
@@ -1082,17 +1086,16 @@ with st.sidebar:
     selected_rig = st.radio("Active Ambulance Unit", RIGS)
 
 # ============================================================
-# 6. BACKUP UTILITY
+# 8. BACKUP UTILITY
 # ============================================================
-
 st.sidebar.markdown("---")
 st.sidebar.subheader("💾 Backup Utility")
 backup_data = {
-    "version": 2,
+    "version": 3,
     "created": datetime.datetime.now().isoformat(timespec="seconds"),
     "inventory": st.session_state.inventory,
-    "shift_usage": {f"{rig}|{med_id}": qty for (rig, med_id), qty in st.session_state.shift_usage.items()},
-    "shift_restock": {f"{rig}|{med_id}": qty for (rig, med_id), qty in st.session_state.shift_restock.items()},
+    "shift_usage": {f"{rig}|{med_id}|{location}": qty for (rig, med_id, location), qty in st.session_state.shift_usage.items()},
+    "shift_restock": {f"{rig}|{med_id}|{location}": qty for (rig, med_id, location), qty in st.session_state.shift_restock.items()},
     "activity_log": st.session_state.activity_log,
 }
 st.sidebar.download_button(
@@ -1103,305 +1106,310 @@ st.sidebar.download_button(
 )
 
 # ============================================================
-# 7. CURRENT VIEW / ALERTS
+# 9. CURRENT VIEW / ALERTS
 # ============================================================
-
 raw_inventory = st.session_state.inventory[selected_rig]
 visible_meds = build_visible_medication_list(selected_rig, user_role)
 today = datetime.date.today()
 fifteen_days_out = today + datetime.timedelta(days=15)
 
-empty_meds, min_meds, expiring_meds, all_expiration_dates = [], [], [], []
+empty_meds, below_par_meds, expiring_meds, all_expiration_dates = [], [], [], []
 for med in visible_meds:
-    exp_date = parse_date(med["expiry"])
-    if exp_date:
-        all_expiration_dates.append(exp_date)
-        if exp_date <= fifteen_days_out:
-            expiring_meds.append(f"{med['name']} ({med['expiry']})")
-    if med["count"] == 0:
+    item = raw_inventory[med["id"]]
+    if med["track_expiration"]:
+        exp_date = parse_date(med["expiry"])
+        if exp_date:
+            all_expiration_dates.append(exp_date)
+            if exp_date <= fifteen_days_out:
+                expiring_meds.append(f"{med['name']} ({format_expiration(med['expiry'])})")
+        elif total_current(item) > 0:
+            expiring_meds.append(f"{med['name']} (expiration not entered)")
+    if (item["shelf_par"] > 0 and item["shelf_count"] == 0) or (item["bag_par"] > 0 and item["bag_count"] == 0):
         empty_meds.append(med["name"])
-    if med["count"] <= med["min"]:
-        min_meds.append(med["name"])
+    if (item["shelf_par"] > 0 and item["shelf_count"] < item["shelf_par"]) or (item["bag_par"] > 0 and item["bag_count"] < item["bag_par"]):
+        below_par_meds.append(med["name"])
 
 st.subheader("⚠️ Inventory & Expiration Status")
 col1, col2, col3, col4 = st.columns(4)
-col1.metric("Earliest Expiration Date", str(min(all_expiration_dates)) if all_expiration_dates else "N/A")
-col2.metric("🚨 Out of Stock", len(empty_meds))
-col3.metric("⚠️ At/Below Min", len(min_meds))
+col1.metric("Earliest Expiration", str(min(all_expiration_dates)) if all_expiration_dates else "N/A")
+col2.metric("🚨 Shelf/Bag Empty", len(empty_meds))
+col3.metric("⚠️ Below Par", len(below_par_meds))
 col4.metric("⏳ Expiring ≤ 15 Days", len(expiring_meds))
 if empty_meds:
-    st.error("**CRITICAL — EMPTY:** " + ", ".join(empty_meds))
-if min_meds:
-    st.warning("**NOTICE — AT/BELOW MIN:** " + ", ".join(min_meds))
+    st.error("**CRITICAL — LOCATION EMPTY:** " + ", ".join(empty_meds))
+if below_par_meds:
+    st.warning("**NOTICE — BELOW PAR:** " + ", ".join(below_par_meds))
 if expiring_meds:
-    st.info("**NOTICE — EXPIRING ≤ 15 DAYS:** " + ", ".join(expiring_meds))
+    st.info("**NOTICE — EXPIRATION:** " + ", ".join(expiring_meds))
 
 # ============================================================
-# 8. MIN/MAX ADMIN LOCK + INVENTORY VIEW
+# 10. PAR ADMIN LOCK + INVENTORY VIEW
 # ============================================================
-
 st.divider()
 if has_permission("manage_minmax"):
     st.sidebar.divider()
-    st.sidebar.subheader("🔐 Min/Max Settings")
-    if st.session_state.minmax_unlocked:
-        st.sidebar.success("Min/Max editing is UNLOCKED.")
-        if st.sidebar.button("🔒 Lock Min/Max", key="lock_minmax"):
-            st.session_state.minmax_unlocked = False
+    st.sidebar.subheader("🔐 Shelf/Bag Par Settings")
+    if st.session_state.par_unlocked:
+        st.sidebar.success("Shelf/Bag par editing is UNLOCKED.")
+        if st.sidebar.button("🔒 Lock Par Levels", key="lock_par"):
+            st.session_state.par_unlocked = False
             st.rerun()
-    elif st.sidebar.button("🔓 Unlock Min/Max", key="unlock_minmax"):
-        st.session_state.minmax_unlocked = True
+    elif st.sidebar.button("🔓 Unlock Par Levels", key="unlock_par"):
+        st.session_state.par_unlocked = True
         st.rerun()
 
 if mobile_device:
     st.subheader(f"📱 Quick Inventory — {selected_rig}")
-    st.caption("Tap a medication to view or update its current quantity and expiration date.")
+    st.caption("Each medication has separate Shelf and Bag quantities and par levels.")
 
     mobile_med_id = st.selectbox(
-        "Medication",
-        [m["id"] for m in visible_meds],
+        "Medication", [m["id"] for m in visible_meds],
         format_func=lambda x: MEDICATIONS[x]["name"],
         key=f"mobile_med_{selected_rig}",
     )
     mobile_item = raw_inventory[mobile_med_id]
     mobile_status = get_status(mobile_item)
-    status_text = {
-        "OUT OF STOCK": "🚨 OUT OF STOCK",
-        "AT / BELOW MIN": "⚠️ AT / BELOW MIN",
-        "OK": "🟢 OK",
-    }[mobile_status]
 
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Current", mobile_item["count"])
-    c2.metric("Min", mobile_item["min"])
-    c3.metric("Max", mobile_item["max"])
-    st.info(f"{status_text}  •  Expires {mobile_item['expiry']}")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Shelf", mobile_item["shelf_count"])
+    c2.metric("Bag", mobile_item["bag_count"])
+    c3.metric("Total", total_current(mobile_item))
+    c4.metric("Total Par", total_par(mobile_item))
+    expiry_text = expiration_for_display(mobile_med_id, mobile_item.get("expiry"))
+    st.info(f"{mobile_status}  •  Expiration: {expiry_text}")
 
     if has_permission("edit_inventory") or has_permission("manage_minmax"):
         with st.form(f"mobile_inventory_form_{selected_rig}"):
-            mobile_count = st.number_input(
-                "Current Quantity", min_value=0, step=1,
-                value=int(mobile_item["count"]),
-                disabled=not has_permission("edit_inventory"),
-            )
-            mobile_expiry = st.date_input(
-                "Expiration Date",
-                value=parse_date(mobile_item["expiry"]) or today + datetime.timedelta(days=365),
-                disabled=not has_permission("edit_inventory"),
-            )
-            if has_permission("manage_minmax") and st.session_state.minmax_unlocked:
-                m1, m2 = st.columns(2)
-                with m1:
-                    mobile_min = st.number_input("Min", min_value=0, step=1, value=int(mobile_item["min"]))
-                with m2:
-                    mobile_max = st.number_input("Max", min_value=0, step=1, value=int(mobile_item["max"]))
+            m1, m2 = st.columns(2)
+            with m1:
+                mobile_shelf = st.number_input("Shelf Current", min_value=0, step=1, value=int(mobile_item["shelf_count"]), disabled=not has_permission("edit_inventory"))
+            with m2:
+                mobile_bag = st.number_input("Bag Current", min_value=0, step=1, value=int(mobile_item["bag_count"]), disabled=not has_permission("edit_inventory"))
+
+            if has_permission("manage_minmax") and st.session_state.par_unlocked:
+                p1, p2 = st.columns(2)
+                with p1:
+                    mobile_shelf_par = st.number_input("Shelf Par", min_value=0, step=1, value=int(mobile_item["shelf_par"]))
+                with p2:
+                    mobile_bag_par = st.number_input("Bag Par", min_value=0, step=1, value=int(mobile_item["bag_par"]))
             else:
-                mobile_min, mobile_max = mobile_item["min"], mobile_item["max"]
+                mobile_shelf_par = mobile_item["shelf_par"]
+                mobile_bag_par = mobile_item["bag_par"]
+
+            if MEDICATIONS[mobile_med_id].get("track_expiration", False):
+                mobile_expiry = st.text_input(
+                    "Expiration (MM/YY)", value=format_expiration(mobile_item.get("expiry")),
+                    placeholder="MM/YY", disabled=not has_permission("edit_inventory")
+                )
+            else:
+                mobile_expiry = ""
+                st.caption("Expiration tracking is not enabled for this medication.")
 
             if st.form_submit_button("💾 Save Medication", type="primary", use_container_width=True):
-                if mobile_max < mobile_min:
-                    st.error("Max cannot be less than Min.")
-                else:
-                    if has_permission("manage_minmax") and st.session_state.minmax_unlocked:
-                        mobile_item["min"], mobile_item["max"] = int(mobile_min), int(mobile_max)
-                    if has_permission("edit_inventory"):
-                        mobile_item["count"] = int(mobile_count)
-                        mobile_item["expiry"] = mobile_expiry.isoformat()
-                    if save_inventory_item(selected_rig, mobile_med_id):
-                        st.success("Medication inventory saved to Supabase.")
-                        st.rerun()
+                expiry_date = None
+                if MEDICATIONS[mobile_med_id].get("track_expiration", False):
+                    expiry_date = parse_expiration_mm_yy(mobile_expiry)
+                    if expiry_date is None and (mobile_shelf + mobile_bag) > 0:
+                        st.error("Enter expiration as MM/YY, such as 10/26.")
+                        st.stop()
+                if has_permission("manage_minmax") and st.session_state.par_unlocked:
+                    mobile_item["shelf_par"] = int(mobile_shelf_par)
+                    mobile_item["bag_par"] = int(mobile_bag_par)
+                if has_permission("edit_inventory"):
+                    mobile_item["shelf_count"] = int(mobile_shelf)
+                    mobile_item["bag_count"] = int(mobile_bag)
+                    if MEDICATIONS[mobile_med_id].get("track_expiration", False):
+                        mobile_item["expiry"] = expiry_date.isoformat() if expiry_date else None
+                    else:
+                        mobile_item["expiry"] = None
+                if save_inventory_item(selected_rig, mobile_med_id):
+                    st.success("Medication inventory saved to Supabase.")
+                    st.rerun()
 
     with st.expander("📋 View All Medications", expanded=False):
         for med in visible_meds:
             item = raw_inventory[med["id"]]
             st.markdown(
                 f"**{med['name']}**  \n"
-                f"Current: **{item['count']}**  •  Min: {item['min']}  •  Max: {item['max']}  \n"
-                f"Expires: {item['expiry']}  •  **{get_status(item)}**"
+                f"Shelf: **{item['shelf_count']} / {item['shelf_par']}**  •  Bag: **{item['bag_count']} / {item['bag_par']}**  \n"
+                f"Total: **{total_current(item)} / {total_par(item)}**  •  Expiration: {expiration_for_display(med['id'], item.get('expiry'))}  •  **{get_status(item)}**"
             )
             st.divider()
 else:
     st.subheader(f"📊 Active Operations Grid — {selected_rig}")
-    st.caption("Edit current quantity and expiration only if you have inventory permission. Min/Max requires the separate Min/Max permission and unlock.")
+    st.caption("Current quantities are editable with inventory permission. Shelf/Bag par levels require the separate par-level permission and unlock.")
 
     edited_data = st.data_editor(
         visible_meds,
         column_config={
             "id": st.column_config.TextColumn("Medication ID", disabled=True),
             "name": st.column_config.TextColumn("Medication Name", disabled=True),
-            "min": st.column_config.NumberColumn("Min", min_value=0, step=1, disabled=not (has_permission("manage_minmax") and st.session_state.minmax_unlocked)),
-            "max": st.column_config.NumberColumn("Max", min_value=0, step=1, disabled=not (has_permission("manage_minmax") and st.session_state.minmax_unlocked)),
-            "count": st.column_config.NumberColumn("Current", min_value=0, step=1, disabled=not has_permission("edit_inventory")),
-            "expiry": st.column_config.TextColumn("Expiration Date (YYYY-MM-DD)", disabled=not has_permission("edit_inventory")),
+            "shelf_count": st.column_config.NumberColumn("Shelf Current", min_value=0, step=1, disabled=not has_permission("edit_inventory")),
+            "bag_count": st.column_config.NumberColumn("Bag Current", min_value=0, step=1, disabled=not has_permission("edit_inventory")),
+            "shelf_par": st.column_config.NumberColumn("Shelf Par", min_value=0, step=1, disabled=not (has_permission("manage_minmax") and st.session_state.par_unlocked)),
+            "bag_par": st.column_config.NumberColumn("Bag Par", min_value=0, step=1, disabled=not (has_permission("manage_minmax") and st.session_state.par_unlocked)),
+            "expiry": st.column_config.TextColumn("Expiration (MM/YY)", disabled=True),
+            "track_expiration": st.column_config.CheckboxColumn("Track Exp.", disabled=True),
         },
-        hide_index=True,
-        use_container_width=True,
-        key=f"grid_editor_{selected_rig}",
+        column_order=["id", "name", "shelf_count", "shelf_par", "bag_count", "bag_par", "expiry", "track_expiration"],
+        hide_index=True, use_container_width=True, key=f"grid_editor_{selected_rig}",
     )
 
-    if st.button("💾 Save Inventory / Min-Max Changes", type="primary", disabled=not (has_permission("edit_inventory") or has_permission("manage_minmax"))):
+    if st.button("💾 Save Inventory / Par Changes", type="primary", disabled=not (has_permission("edit_inventory") or has_permission("manage_minmax"))):
         errors = []
         for row in edited_data:
             med_id = row["id"]
-            minimum, maximum, count = int(row["min"]), int(row["max"]), int(row["count"])
-            expiry = str(row["expiry"])
-            if maximum < minimum:
-                errors.append(f"{row['name']}: Max cannot be less than Min.")
-                continue
-            if parse_date(expiry) is None:
-                errors.append(f"{row['name']}: Expiration must be YYYY-MM-DD.")
-                continue
             item = raw_inventory[med_id]
-            if has_permission("manage_minmax") and st.session_state.minmax_unlocked:
-                item["min"], item["max"] = minimum, maximum
+            if int(row["shelf_count"]) < 0 or int(row["bag_count"]) < 0 or int(row["shelf_par"]) < 0 or int(row["bag_par"]) < 0:
+                errors.append(f"{row['name']}: quantities and par levels cannot be negative.")
+                continue
+            if has_permission("manage_minmax") and st.session_state.par_unlocked:
+                item["shelf_par"] = int(row["shelf_par"])
+                item["bag_par"] = int(row["bag_par"])
             if has_permission("edit_inventory"):
-                item["count"], item["expiry"] = max(0, count), expiry
+                item["shelf_count"] = int(row["shelf_count"])
+                item["bag_count"] = int(row["bag_count"])
         if errors:
             for error in errors:
                 st.error(error)
-        else:
-            if save_inventory_rows([
-                {
-                    "rig": selected_rig,
-                    "medication_id": med_id,
-                    "count": int(raw_inventory[med_id]["count"]),
-                    "min": int(raw_inventory[med_id]["min"]),
-                    "max": int(raw_inventory[med_id]["max"]),
-                    "expiry": str(raw_inventory[med_id]["expiry"]),
-                    "usage": int(raw_inventory[med_id].get("usage", 0)),
-                    "restocked": int(raw_inventory[med_id].get("restocked", 0)),
-                }
-                for med_id in raw_inventory
-            ]):
-                st.success("✅ Inventory and Min/Max changes saved to Supabase.")
-                st.rerun()
+        elif save_inventory_rows(inventory_rows_from_state()):
+            st.success("✅ Inventory and Shelf/Bag par changes saved to Supabase.")
+            st.rerun()
 
 # ============================================================
-# 9. SEPARATE USAGE / RESTOCK
+# 11. SEPARATE USAGE / RESTOCK
 # ============================================================
-
 st.divider()
 available_ids = visible_med_ids(selected_rig, user_role)
+
+def process_usage(med_id, location, quantity):
+    item = raw_inventory[med_id]
+    count_key = "shelf_count" if location == "Shelf" else "bag_count"
+    if int(quantity) > int(item[count_key]):
+        st.error(f"Cannot record {quantity}. {location} has only {item[count_key]} on hand.")
+        return
+    old_item = copy.deepcopy(item)
+    item[count_key] -= int(quantity)
+    if save_usage_and_inventory(selected_rig, med_id, location, quantity, old_item):
+        st.session_state.shift_usage[(selected_rig, med_id, location)] = shift_totals(selected_rig, med_id, "usage", location) + int(quantity)
+        record_activity(selected_rig, med_id, "usage", quantity, location=location)
+        st.success(f"Recorded {quantity} × {MEDICATIONS[med_id]['name']} used from {location}.")
+        st.rerun()
+
+
+def process_restock(med_id, location, quantity, incoming_expiry=None):
+    item = raw_inventory[med_id]
+    count_key = "shelf_count" if location == "Shelf" else "bag_count"
+    item[count_key] += int(quantity)
+    if MEDICATIONS[med_id].get("track_expiration", False) and incoming_expiry:
+        old_expiry = parse_date(item.get("expiry"))
+        item["expiry"] = min(old_expiry, incoming_expiry).isoformat() if old_expiry else incoming_expiry.isoformat()
+    if save_inventory_item(selected_rig, med_id):
+        st.session_state.shift_restock[(selected_rig, med_id, location)] = shift_totals(selected_rig, med_id, "restock", location) + int(quantity)
+        record_activity(selected_rig, med_id, "restock", quantity, location=location, expiration=incoming_expiry.isoformat() if incoming_expiry else None)
+        active_exp = format_expiration(item.get("expiry")) if item.get("expiry") else "not entered"
+        st.success(f"Recorded {quantity} × {MEDICATIONS[med_id]['name']} to {location}. Active expiration: {active_exp}.")
+        st.rerun()
 
 if mobile_device:
     usage_tab, restock_tab = st.tabs(["💉 Record Usage", "📦 Record Restock"])
     with usage_tab:
-        st.caption("Record medication removed/used during the shift. Quantity cannot exceed stock on hand.")
+        st.caption("Record medication removed/used from a specific location.")
         if available_ids:
             usage_med_id = st.selectbox("Medication Used", available_ids, format_func=lambda x: MEDICATIONS[x]["name"], key="mobile_usage_med")
+            usage_location = st.selectbox("Location", ["Shelf", "Bag"], key="mobile_usage_location")
             usage_qty = st.number_input("Quantity Used", min_value=1, step=1, value=1, key="mobile_usage_qty")
             if st.button("➖ Record Usage", disabled=not has_permission("record_usage"), key="mobile_record_usage", use_container_width=True):
-                item = raw_inventory[usage_med_id]
-                if usage_qty > item["count"]:
-                    st.error(f"Cannot record {usage_qty}. Only {item['count']} on hand.")
-                else:
-                    item["count"] -= int(usage_qty)
-                    item["usage"] += int(usage_qty)
-                    st.session_state.shift_usage[(selected_rig, usage_med_id)] = shift_totals(selected_rig, usage_med_id, "usage") + int(usage_qty)
-                    record_activity(selected_rig, usage_med_id, "usage", usage_qty)
-                    if save_inventory_item(selected_rig, usage_med_id):
-                        st.success(f"Recorded {usage_qty} × {MEDICATIONS[usage_med_id]['name']} as used.")
-                        st.rerun()
-
+                process_usage(usage_med_id, usage_location, usage_qty)
     with restock_tab:
-        st.caption("Record medication added to the rig. If stock already exists, the earliest expiration is retained.")
+        st.caption("Record medication added to a specific location. The earliest expiration remains active when expiration is tracked.")
         if available_ids:
             restock_med_id = st.selectbox("Medication Restocked", available_ids, format_func=lambda x: MEDICATIONS[x]["name"], key="mobile_restock_med")
+            restock_location = st.selectbox("Location", ["Shelf", "Bag"], key="mobile_restock_location")
             restock_qty = st.number_input("Quantity Restocked", min_value=1, step=1, value=1, key="mobile_restock_qty")
-            restock_expiry = st.date_input("Expiration of Incoming Stock", value=today + datetime.timedelta(days=365), key="mobile_restock_expiry")
+            if MEDICATIONS[restock_med_id].get("track_expiration", False):
+                restock_expiry_text = st.text_input("Incoming Expiration (MM/YY)", placeholder="MM/YY", key="mobile_restock_expiry")
+            else:
+                restock_expiry_text = ""
+                st.caption("Expiration tracking is not enabled for this medication.")
             if st.button("➕ Record Restock", disabled=not has_permission("record_restock"), key="mobile_record_restock", use_container_width=True):
-                item = raw_inventory[restock_med_id]
-                incoming = restock_expiry
-                old_expiry = parse_date(item.get("expiry"))
-                if item["count"] <= 0 or old_expiry is None:
-                    item["expiry"] = incoming.isoformat()
-                else:
-                    item["expiry"] = min(old_expiry, incoming).isoformat()
-                item["count"] += int(restock_qty)
-                item["restocked"] += int(restock_qty)
-                st.session_state.shift_restock[(selected_rig, restock_med_id)] = shift_totals(selected_rig, restock_med_id, "restock") + int(restock_qty)
-                record_activity(selected_rig, restock_med_id, "restock", restock_qty, incoming.isoformat())
-                if save_inventory_item(selected_rig, restock_med_id):
-                    st.success(f"Recorded {restock_qty} × {MEDICATIONS[restock_med_id]['name']} as restocked. Active expiration: {item['expiry']}.")
-                    st.rerun()
+                incoming = None
+                if MEDICATIONS[restock_med_id].get("track_expiration", False):
+                    incoming = parse_expiration_mm_yy(restock_expiry_text)
+                    if incoming is None:
+                        st.error("Enter incoming expiration as MM/YY, such as 10/26.")
+                        st.stop()
+                process_restock(restock_med_id, restock_location, restock_qty, incoming)
 else:
     left, right = st.columns(2)
     with left:
         st.subheader("💉 Medication Usage")
-        st.caption("Record medication removed/used during the shift. Quantity cannot exceed stock on hand.")
+        st.caption("Record medication removed/used from a specific location.")
         if available_ids:
             usage_med_id = st.selectbox("Medication Used", available_ids, format_func=lambda x: MEDICATIONS[x]["name"], key="usage_med")
+            usage_location = st.selectbox("Location", ["Shelf", "Bag"], key="usage_location")
             usage_qty = st.number_input("Quantity Used", min_value=1, step=1, value=1, key="usage_qty")
             if st.button("➖ Record Usage", disabled=not has_permission("record_usage"), key="record_usage_button"):
-                item = raw_inventory[usage_med_id]
-                if usage_qty > item["count"]:
-                    st.error(f"Cannot record {usage_qty}. Only {item['count']} on hand.")
-                else:
-                    item["count"] -= int(usage_qty)
-                    item["usage"] += int(usage_qty)
-                    st.session_state.shift_usage[(selected_rig, usage_med_id)] = shift_totals(selected_rig, usage_med_id, "usage") + int(usage_qty)
-                    record_activity(selected_rig, usage_med_id, "usage", usage_qty)
-                    if save_inventory_item(selected_rig, usage_med_id):
-                        st.success(f"Recorded {usage_qty} × {MEDICATIONS[usage_med_id]['name']} as used.")
-                        st.rerun()
-
+                process_usage(usage_med_id, usage_location, usage_qty)
     with right:
         st.subheader("📦 Medication Restock")
-        st.caption("Record medication added to the rig. If the rig already has stock, the earliest expiration is retained.")
+        st.caption("Record medication added to a specific location. The earliest expiration remains active when expiration is tracked.")
         if available_ids:
             restock_med_id = st.selectbox("Medication Restocked", available_ids, format_func=lambda x: MEDICATIONS[x]["name"], key="restock_med")
+            restock_location = st.selectbox("Location", ["Shelf", "Bag"], key="restock_location")
             restock_qty = st.number_input("Quantity Restocked", min_value=1, step=1, value=1, key="restock_qty")
-            restock_expiry = st.date_input("Expiration of Incoming Stock", value=today + datetime.timedelta(days=365), key="restock_expiry")
+            if MEDICATIONS[restock_med_id].get("track_expiration", False):
+                restock_expiry_text = st.text_input("Incoming Expiration (MM/YY)", placeholder="MM/YY", key="restock_expiry")
+            else:
+                restock_expiry_text = ""
+                st.caption("Expiration tracking is not enabled for this medication.")
             if st.button("➕ Record Restock", disabled=not has_permission("record_restock"), key="record_restock_button"):
-                item = raw_inventory[restock_med_id]
-                incoming = restock_expiry
-                old_expiry = parse_date(item.get("expiry"))
-                if item["count"] <= 0 or old_expiry is None:
-                    item["expiry"] = incoming.isoformat()
-                else:
-                    item["expiry"] = min(old_expiry, incoming).isoformat()
-                item["count"] += int(restock_qty)
-                item["restocked"] += int(restock_qty)
-                st.session_state.shift_restock[(selected_rig, restock_med_id)] = shift_totals(selected_rig, restock_med_id, "restock") + int(restock_qty)
-                record_activity(selected_rig, restock_med_id, "restock", restock_qty, incoming.isoformat())
-                if save_inventory_item(selected_rig, restock_med_id):
-                    st.success(f"Recorded {restock_qty} × {MEDICATIONS[restock_med_id]['name']} as restocked. Active expiration: {item['expiry']}.")
-                    st.rerun()
+                incoming = None
+                if MEDICATIONS[restock_med_id].get("track_expiration", False):
+                    incoming = parse_expiration_mm_yy(restock_expiry_text)
+                    if incoming is None:
+                        st.error("Enter incoming expiration as MM/YY, such as 10/26.")
+                        st.stop()
+                process_restock(restock_med_id, restock_location, restock_qty, incoming)
 
 # ============================================================
-# 10. RESTOCK NEEDS + COPY-PASTE REQUEST
+# 12. RESTOCK NEEDS + COPY-PASTE REQUEST
 # ============================================================
-
 st.divider()
 st.subheader("📦 Restock Needs")
 restock_rows = []
 for med in visible_meds:
     item = raw_inventory[med["id"]]
-    needed = max(0, item["max"] - item["count"])
-    if needed > 0:
+    shelf_needed = max(0, item["shelf_par"] - item["shelf_count"])
+    bag_needed = max(0, item["bag_par"] - item["bag_count"])
+    if shelf_needed or bag_needed:
         restock_rows.append({
             "Medication": med["name"],
-            "Current": item["count"],
-            "Min": item["min"],
-            "Max": item["max"],
-            "Restock Needed": needed,
-            "Expiration": item["expiry"],
+            "Shelf Current": item["shelf_count"],
+            "Shelf Par": item["shelf_par"],
+            "Shelf Needed": shelf_needed,
+            "Bag Current": item["bag_count"],
+            "Bag Par": item["bag_par"],
+            "Bag Needed": bag_needed,
+            "Total Needed": shelf_needed + bag_needed,
+            "Expiration": expiration_for_display(med["id"], item.get("expiry")),
             "Status": get_status(item),
         })
 if restock_rows:
     st.dataframe(restock_rows, hide_index=True, use_container_width=True)
     request_lines = [f"Ambulance medication restock request — {selected_rig}", ""]
     for row in restock_rows:
-        request_lines.append(f"{row['Medication']}: {row['Restock Needed']} (current {row['Current']}, max {row['Max']})")
-    request_text = "\n".join(request_lines)
-    st.text_area("Supervisor Restock Request", request_text, height=180)
+        if row["Shelf Needed"]:
+            request_lines.append(f"{row['Medication']} — Shelf: {row['Shelf Needed']} needed (current {row['Shelf Current']}, par {row['Shelf Par']})")
+        if row["Bag Needed"]:
+            request_lines.append(f"{row['Medication']} — Bag: {row['Bag Needed']} needed (current {row['Bag Current']}, par {row['Bag Par']})")
+    st.text_area("Supervisor Restock Request", "\n".join(request_lines), height=220)
 else:
-    st.success("✅ All visible medications are at their Max target.")
+    st.success("✅ All visible medications are at their Shelf and Bag par levels.")
 
 # ============================================================
-# 11. SHIFT SUMMARY + ACTIVITY
+# 13. SHIFT SUMMARY + USAGE HISTORY
 # ============================================================
-
 st.divider()
 st.subheader("📋 Shift Summary Text Exporter")
 summary_text = build_shift_summary(selected_rig, user_role)
@@ -1419,3 +1427,24 @@ with st.expander("📝 View Shift Activity Log"):
         st.dataframe(list(reversed(rig_activity)), hide_index=True, use_container_width=True)
     else:
         st.info("No usage or restock activity has been recorded for this rig yet.")
+
+st.subheader("💉 Medication Usage History")
+usage_history = load_usage_history(selected_rig)
+if usage_history:
+    usage_display = []
+    for row in usage_history:
+        med_id = row.get("medication_id")
+        usage_display.append({
+            "Date/Time": row.get("used_at", ""),
+            "Medication": MEDICATIONS.get(med_id, {}).get("name", med_id),
+            "Location": row.get("location", ""),
+            "Quantity": row.get("quantity", 0),
+            "User": row.get("user_initials", ""),
+        })
+    st.dataframe(usage_display, hide_index=True, use_container_width=True)
+else:
+    if st.session_state.get("usage_history_load_error"):
+        st.caption(f"Usage history unavailable: {st.session_state.usage_history_load_error}")
+    else:
+        st.info("No medication usage has been recorded for this rig yet.")
+
