@@ -722,13 +722,15 @@ if not load_medication_master():
         "The inventory cannot be started safely."
     )
 
-    if st.session_state.get("medication_master_load_error"):
-        st.caption(
-            st.session_state["medication_master_load_error"]
-        )
+    diagnostic = st.session_state.get(
+        "medication_master_load_error",
+        "NO DIAGNOSTIC MESSAGE WAS SET"
+    )
+
+    st.warning(f"DIAGNOSTIC: {diagnostic}")
 
     st.stop()
-
+    
 if not MEDICATIONS:
     st.error(
         "No active medications are defined in the Supabase "
