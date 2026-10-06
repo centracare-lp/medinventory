@@ -294,9 +294,11 @@ def load_medication_master(force=False):
         st.session_state.medication_master_loaded = True
         st.session_state.medication_master_load_error = ""
         return bool(validated)
-    except (requests.RequestException, ValueError, TypeError) as exc:
-        st.session_state.medication_master_load_error = str(exc)
-        return False
+except (requests.RequestException, ValueError, TypeError) as exc:
+    st.session_state.medication_master_load_error = (
+        f"{type(exc).__name__}: {exc}"
+    )
+    return False
 
 
 def save_medication_master_rows(rows):
