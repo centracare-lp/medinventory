@@ -263,7 +263,7 @@ def load_medication_master(force=False):
         and MEDICATIONS
         and not force
     ):
-    return True
+        return True
 
     try:
         response = requests.get(
