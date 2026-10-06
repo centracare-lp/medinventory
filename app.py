@@ -253,7 +253,9 @@ def apply_medication_master(rows):
 def load_medication_master(force=False):
     """Load the medication master strictly from Supabase."""
     if not supabase_configured():
-        st.session_state.medication_master_load_error = "Supabase is not configured."
+        st.session_state.medication_master_load_error = (
+            "Supabase is not configured."
+        )
         return False
 
     if st.session_state.get("medication_master_loaded") and not force:
@@ -262,7 +264,10 @@ def load_medication_master(force=False):
     try:
         response = requests.get(
             f"{SUPABASE_URL}/rest/v1/{SUPABASE_MEDICATION_TABLE}",
-            headers={**supabase_headers(), "Accept": "application/json"},
+            headers={
+                **supabase_headers(),
+                "Accept": "application/json",
+            },
             params={
                 "select": "medication_id,name,controlled,track_expiration,active",
                 "order": "medication_id.asc",
@@ -270,13 +275,14 @@ def load_medication_master(force=False):
             timeout=10,
         )
 
+        status_code = response.status_code
         response.raise_for_status()
 
         rows = response.json()
 
         if not isinstance(rows, list):
             raise ValueError(
-                "Supabase returned an invalid medication master list."
+                f"Supabase returned {type(rows).__name__} instead of a list."
             )
 
         validated = []
@@ -304,12 +310,24 @@ def load_medication_master(force=False):
 
             seen.add(med_id)
 
+        if not validated:
+            st.session_state.medication_master_load_error = (
+                f"Supabase connection succeeded (HTTP {status_code}), "
+                f"but the app received {len(rows)} rows and recognized "
+                f"0 active medications."
+            )
+            return False
+
         apply_medication_master(validated)
 
         st.session_state.medication_master_loaded = True
-        st.session_state.medication_master_load_error = ""
+        st.session_state.medication_master_load_error = (
+            f"Supabase OK: HTTP {status_code}; "
+            f"{len(rows)} rows returned; "
+            f"{len(validated)} active medications loaded."
+        )
 
-        return bool(validated)
+        return True
 
     except (requests.RequestException, ValueError, TypeError) as exc:
         st.session_state.medication_master_load_error = (
