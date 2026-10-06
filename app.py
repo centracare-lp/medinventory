@@ -255,8 +255,10 @@ def load_medication_master(force=False):
     if not supabase_configured():
         st.session_state.medication_master_load_error = "Supabase is not configured."
         return False
+
     if st.session_state.get("medication_master_loaded") and not force:
         return bool(MEDICATIONS)
+
     try:
         response = requests.get(
             f"{SUPABASE_URL}/rest/v1/{SUPABASE_MEDICATION_TABLE}",
@@ -267,39 +269,53 @@ def load_medication_master(force=False):
             },
             timeout=10,
         )
+
         response.raise_for_status()
+
         rows = response.json()
+
         if not isinstance(rows, list):
-            raise ValueError("Supabase returned an invalid medication master list.")
+            raise ValueError(
+                "Supabase returned an invalid medication master list."
+            )
 
         validated = []
         seen = set()
+
         for row in rows:
             if not bool(row.get("active", True)):
                 continue
+
             med_id = str(row.get("medication_id", "")).strip()
             name = str(row.get("name", "")).strip()
+
             if not med_id or not name or med_id in seen:
                 continue
+
             validated.append({
                 "medication_id": med_id,
                 "name": name,
                 "controlled": bool(row.get("controlled", False)),
-                "track_expiration": bool(row.get("track_expiration", False)),
+                "track_expiration": bool(
+                    row.get("track_expiration", False)
+                ),
                 "active": True,
             })
+
             seen.add(med_id)
 
         apply_medication_master(validated)
+
         st.session_state.medication_master_loaded = True
         st.session_state.medication_master_load_error = ""
-        return bool(validated)
-except (requests.RequestException, ValueError, TypeError) as exc:
-    st.session_state.medication_master_load_error = (
-        f"{type(exc).__name__}: {exc}"
-    )
-    return False
 
+        return bool(validated)
+
+    except (requests.RequestException, ValueError, TypeError) as exc:
+        st.session_state.medication_master_load_error = (
+            f"{type(exc).__name__}: {exc}"
+        )
+        return False
 
 def save_medication_master_rows(rows):
     """Upsert the complete medication master and deactivate omitted IDs."""
