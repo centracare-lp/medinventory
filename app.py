@@ -258,11 +258,11 @@ def load_medication_master(force=False):
         )
         return False
 
-if (
-    st.session_state.get("medication_master_loaded")
-    and MEDICATIONS
-    and not force
-):
+    if (
+        st.session_state.get("medication_master_loaded")
+        and MEDICATIONS
+        and not force
+    ):
     return True
 
     try:
